@@ -199,9 +199,9 @@ already public — the `electrum_client::ElectrumApi` trait (external crate: `ba
 `transaction_get`, `batch_block_header`, `batch_transaction_get_merkle`) and `bdk_core::spk_client`'s
 `FullScanRequest`/`SyncRequest`/`FullScanResponse`/`SyncResponse`/`TxUpdate`/`CheckPoint`, all with
 public builders. `bdk_wallet::Update` has `From<FullScanResponse<KeychainKind>>` and `From<SyncResponse>`
-impls, and `apply_update(impl Into<Update>)` takes either. In the published 2.1.0 that `capture/`
-builds against, these are at `src/wallet/mod.rs:118,130,140` and `:2353`. In the local 3.1.0
-checkout they are at `:126,138,148` and `:2267`. So a
+impls, and `apply_update(impl Into<Update>)` takes either. In `bdk_wallet` 2.1.0 — the version this
+crate targets, and the one `capture/` already builds against (see "Which upstream version to copy"
+below) — these are at `src/wallet/mod.rs:118,130,140` and `:2353`. So a
 new crate that reimplements `full_scan`/`sync` against the same public surface, with decoy injection
 added, plugs into `wallet.apply_update()` completely unchanged — no fork of `bdk_electrum`, no changes
 to `bdk_wallet`.
@@ -278,13 +278,23 @@ reading `bdk_electrum`. The last two came from drawing the diagrams in the next 
    presence across rounds, not only by the round they first appeared, before it can ship — which is
    why it stays a stretch goal rather than the default.
 
-**Which upstream version to copy.** `capture/Cargo.lock` resolves `bdk_wallet` 2.1.0, `bdk_electrum`
-0.23.2, `bdk_chain` 0.23.3, `bdk_core` 0.6.3 and `electrum-client` 0.24.1. The local `~/bdk_wallet`
-checkout (3.1.0) depends on the same `bdk_chain` 0.23.3 and `bdk_electrum` 0.23.2, so both wallet
-versions see the same request and response types. The new crate must resolve the same `bdk_core`
-minor version, 0.6. Rust treats one type from two versions of a crate as two different types, so a
-response built against another version would not convert into `bdk_wallet`'s `Update`, and the code
-would not compile. The local `~/bdk` clone is unreleased master, and it differs from the published
+**Which upstream version to copy.** Resolved 2026-09-26: the new crate targets `bdk_wallet` 2.1.0,
+the published, stable release from crates.io. It is not built against the local `~/bdk_wallet`
+checkout, which is a personal fork at version 3.1.0 — a version that exists only in that checkout,
+not in the crates.io registry cache this machine has fetched from (confirmed by listing
+`~/.cargo/registry/src/`: only `bdk_wallet-2.1.0` is there). `capture/Cargo.lock` already resolves
+`bdk_wallet` 2.1.0, `bdk_electrum` 0.23.2, `bdk_chain` 0.23.3, `bdk_core` 0.6.3 and `electrum-client`
+0.24.1, and this is the toolchain that produced the real capture fixture in `tests/fixtures/`, so the
+query engine builds against a dependency set already proven to work end to end. Standardising on one
+version also removes a recurring source of drift in this document: three separate places above used
+to carry two sets of `mod.rs` line numbers, one per version, because the local fork and the published
+crate don't stay in step line-for-line even when the public API is unchanged.
+
+The new crate must resolve the same `bdk_core` minor version, 0.6, that `bdk_wallet` 2.1.0 uses. Rust
+treats one type from two versions of a crate as two different types, so a response built against a
+different `bdk_core` would not convert into `bdk_wallet`'s `Update`, and the code would not compile.
+The local `~/bdk` clone (a separate checkout of `bdk_chain`/`bdk_electrum`/`bdk_core`, used only for
+reading source, never as a build target) is unreleased master, and it differs from the published
 0.23.2 in two ways that matter here:
 
 - Master's full scan covers every revealed position before it starts counting the stop gap
@@ -294,10 +304,8 @@ would not compile. The local `~/bdk` clone is unreleased master, and it differs 
   one requested. Published 0.23.2 accepts whatever the server sends and caches it under the
   requested txid.
 
-So copy 0.23.2's structure, and port master's txid check. Without that check, a hostile server could
-answer a request for one transaction with a different one. Week 2 still has to pick which
-`bdk_wallet` version to target. Both 2.1.0 and 3.1.0 pull the same `bdk_electrum` and `bdk_chain`, so
-this holds either way.
+So copy 0.23.2's structure, and port master's txid check by hand. Without that check, a hostile
+server could answer a request for one transaction with a different one.
 
 This resolves what was previously an implicit assumption (the "Electrum server" box in the diagram
 above). It does not resolve the open questions below, all of which are still live.
@@ -440,17 +448,13 @@ The server is the only part on the far side of the trust boundary. It receives e
 `Q` and answers all of them. The design assumes it answers honestly. A lying server is out of scope
 (`docs/01-threat-model.md`), because it can already show any client a false balance.
 
-The measurement path exists today, but only for plain syncs:
-
-- `capture/` runs real `bdk_wallet` full scans against the honeypot and records what the wallet
-  itself sent. That record is the ground truth.
-- `scripts/honeypot_electrum.py` records what arrived at the server. That record is the adversary's
-  view.
-- `python3 -m attack tripwire --honeypot tests/fixtures/bdk-honeypot-log.json --capture
-  tests/fixtures/bdk-capture-truth.json` checks the two against each other. On those fixtures it
-  passes all four of its checks. The server received exactly the wallet's 100 scripthashes in each of the 6 rounds.
-  Plain Electrum reads 0.00 bits on every metric. Fresh random decoys fall to 0.00 bits by round 3.
-  Fixed decoys read exactly `log2(1000 / 100) = 3.32` bits.
+The measurement path exists today, but only for plain syncs: `capture/` runs real `bdk_wallet` full
+scans against the honeypot and records what the wallet itself sent, which is the ground truth;
+`scripts/honeypot_electrum.py` records what arrived at the server, which is the adversary's view; and
+`python3 -m attack tripwire` checks the two against each other, passing all four of its checks against
+the committed fixtures. `capture/README.md` and `attack/README.md` have the exact commands and the
+current numbers — this stays here only as a pointer, so the five-step product path above has
+something real to contrast against.
 
 The session log is proposed because the honeypot can't measure real decoys. The honeypot answers
 "nothing found" to every query. Decoys drawn from the chain have real history, and the structural

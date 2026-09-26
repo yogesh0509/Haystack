@@ -1,7 +1,10 @@
 # The problem
 
 Every claim below has a command next to it. Run them. The outputs shown were captured on
-2026-09-08 against live infrastructure and a clean checkout of `bdk_wallet` v3.1.0.
+2026-09-08 against live infrastructure and a clean checkout of `bdk_wallet` v3.1.0 — the local fork
+used for this one-off demonstration, not the version the project builds against. `capture/` and the
+planned query engine target the published `bdk_wallet` 2.1.0 instead; see `docs/02-design.md`,
+"Which upstream version to copy," for why.
 
 Each section states a claim and gives the command that verifies it, so nothing here needs to be taken
 on faith. For how a given script or decoy strategy is implemented mechanically, see
