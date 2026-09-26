@@ -39,3 +39,18 @@ Ctrl-C, SIGINT or SIGTERM. To point BDK at it, edit `ELECTRUM_URL` in
 indistinguishable from real addresses. That assumption is exactly what fails in practice, so treat
 its numbers as an upper bound on achievable privacy rather than a measurement of it. See
 `../docs/02-design.md` attack A2.
+
+The attack is one line: `surviving = surviving & query` per round — no classifier, no belief
+scoring, just "which scripthashes appeared in every observed query so far." Real addresses always
+pass (`query = real_set | decoys` every round), so `surviving` floors at `|R|`. Decoys pass only if
+the strategy happens to resend them:
+
+- `fresh` redraws all decoys independently from the pool each round → near-zero overlap between
+  rounds (expected survivors ≈ `k²/|U|`), collapses to `|R|` by round 3.
+- `deterministic` resends the same fixed decoy set forever → never collapses.
+- `epoch/N` holds decoys fixed within an epoch but redraws independently at each boundary →
+  collapses like `fresh` every N rounds. Strictly worse than `deterministic`, not a middle ground.
+- `monotone` (append-only) keeps the original fixed set forever and only ever unions in more
+  addresses — a positional slice of the sorted pool (`pool[k:k+r*(k//10)]`), not re-randomized, so
+  it can overlap `fixed` and isn't guaranteed to add exactly that many new addresses. Never
+  collapses, and can grow to cover new real addresses without losing ground already won.

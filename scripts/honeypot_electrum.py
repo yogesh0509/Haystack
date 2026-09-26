@@ -13,10 +13,14 @@ burst. You are now holding what a real server holds.
 For BDK, in bdk_wallet/examples/electrum.rs change:
     const ELECTRUM_URL: &str = "tcp://127.0.0.1:50001";
 then:  cargo run --example electrum --features test-utils
+or, without editing BDK:  cargo run --release --manifest-path capture/Cargo.toml
 
-Ctrl-C for the summary. Full log written to honeypot-log.json.
+Ctrl-C for the summary. Full log written to honeypot-log.json, one entry per
+query, tagged with its connection, batch and position -- the attack harness
+treats each connection as one sync round.
 """
 import argparse
+import itertools
 import json
 import signal
 import socketserver
@@ -42,16 +46,17 @@ SCRIPTHASH_METHODS = {
 # Every scripthash we were asked about, in arrival order.
 CAPTURED = []
 STARTED_AT = None
+CONNECTIONS = itertools.count(1)
 
 
-def dispatch(method, params):
+def dispatch(method, params, where):
     """Answer plausibly, and always answer 'empty' for anything wallet-shaped."""
     if method in SCRIPTHASH_METHODS:
         sh = params[0] if params else None
-        CAPTURED.append({"t": round(time.time() - STARTED_AT, 4),
+        CAPTURED.append({"t": round(time.time() - STARTED_AT, 4), **where,
                          "method": method, "scripthash": sh})
         n = len(CAPTURED)
-        print(f"  [{n:>4}] {sh}", flush=True)
+        print(f"  [{n:>4}] conn {where['conn']}  {sh}", flush=True)
         if method == "blockchain.scripthash.get_balance":
             return {"confirmed": 0, "unconfirmed": 0}
         if method == "blockchain.scripthash.subscribe":
@@ -90,11 +95,12 @@ def dispatch(method, params):
     raise LookupError(f"unhandled method {method}")
 
 
-def handle_one(req):
+def handle_one(req, where):
     rid = req.get("id")
     try:
         return {"jsonrpc": "2.0", "id": rid,
-                "result": dispatch(req.get("method"), req.get("params") or [])}
+                "result": dispatch(req.get("method"), req.get("params") or [],
+                                   where)}
     except Exception as e:
         return {"jsonrpc": "2.0", "id": rid,
                 "error": {"code": -32601, "message": str(e)}}
@@ -102,23 +108,26 @@ def handle_one(req):
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
+        conn = next(CONNECTIONS)
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
-        print(f"\n--- client connected: {peer} ---", flush=True)
-        for line in self.rfile:
-            line = line.strip()
-            if not line:
-                continue
+        print(f"\n--- client connected: {peer} (conn {conn}) ---", flush=True)
+        for batch, line in enumerate(l for l in self.rfile if l.strip()):
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
             # electrum_client batches requests during a full scan; a batch
             # arrives as a JSON array and must come back as one.
-            out = ([handle_one(r) for r in msg] if isinstance(msg, list)
-                   else handle_one(msg))
+            if isinstance(msg, list):
+                out = [handle_one(r, {"conn": conn, "peer": peer,
+                                      "batch": batch, "pos": pos})
+                       for pos, r in enumerate(msg)]
+            else:
+                out = handle_one(msg, {"conn": conn, "peer": peer,
+                                       "batch": batch, "pos": 0})
             self.wfile.write((json.dumps(out) + "\n").encode())
             self.wfile.flush()
-        print(f"--- client disconnected: {peer} ---", flush=True)
+        print(f"--- client disconnected: {peer} (conn {conn}) ---", flush=True)
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -131,6 +140,7 @@ def summarise(path):
     print("\n" + "=" * 60)
     print(f"scripthash queries received : {len(CAPTURED)}")
     print(f"distinct scripthashes        : {len(uniq)}")
+    print(f"connections (sync rounds)    : {len({c['conn'] for c in CAPTURED})}")
     if CAPTURED:
         span = CAPTURED[-1]["t"] - CAPTURED[0]["t"]
         print(f"elapsed across the burst     : {span:.3f}s")

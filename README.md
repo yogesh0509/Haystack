@@ -73,8 +73,11 @@ implementation gets them backwards:
 
 ## Status
 
-Pre-implementation. Docs and the problem-verification harness only. See
-[docs/04-roadmap.md](docs/04-roadmap.md) for what lands when.
+**Week 1 done:** the attack harness and metric suite are implemented and calibrated — `attack/`,
+25 passing tests, `python3 -m attack tripwire` and `calibrate`. The query engine that would send real
+padded traffic (`haystack-electrum`) doesn't exist yet, so every result so far is either real plain
+Electrum traffic or synthetic padded traffic. See [docs/04-roadmap.md](docs/04-roadmap.md) for what
+lands when.
 
 ## Built on
 

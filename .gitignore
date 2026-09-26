@@ -28,8 +28,11 @@ venv/
 
 # Haystack runtime artifacts
 honeypot-log.json
+capture-truth.json
 *.sqlite
 bdk-example-*.sqlite
 
 # Self Documentation
-/docs/
+/docs/04-roadmap.md
+/docs/05-prior-art.md
+/docs/06-decision-log.md

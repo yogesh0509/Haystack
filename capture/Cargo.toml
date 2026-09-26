@@ -1,0 +1,10 @@
+[package]
+name = "haystack-capture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Run real bdk_wallet full scans against an Electrum endpoint and record the wallet's own view of what it queried."
+
+[dependencies]
+bdk_wallet = { version = "2.1.0", default-features = false, features = ["std"] }
+bdk_electrum = "0.23.2"
