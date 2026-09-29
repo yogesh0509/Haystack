@@ -53,15 +53,15 @@ python3 scripts/electrum_probe.py --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 #    its entire address set, because every reply is "nothing found".
 python3 scripts/honeypot_electrum.py
 
-# 4. Why the obvious decoy scheme fails after two syncs.
-python3 scripts/intersection_sim.py
+# 4. Why the obvious decoy scheme fails after two syncs, run by the project's own attacker.
+python3 -m attack strategies
 ```
 
 Full walkthrough with expected output in [docs/00-problem.md](docs/00-problem.md).
 
 ## Two results worth knowing up front
 
-Both fall out of `scripts/intersection_sim.py`, and both are counterintuitive enough that a naive
+Both fall out of `python3 -m attack strategies`, and both are counterintuitive enough that a naive
 implementation gets them backwards:
 
 - **Re-randomising decoys every sync destroys privacy.** Your real addresses appear in every round;
@@ -74,10 +74,20 @@ implementation gets them backwards:
 ## Status
 
 **Week 1 done:** the attack harness and metric suite are implemented and calibrated — `attack/`,
-25 passing tests, `python3 -m attack tripwire` and `calibrate`. The query engine that would send real
-padded traffic (`haystack-electrum`) doesn't exist yet, so every result so far is either real plain
-Electrum traffic or synthetic padded traffic. See [docs/04-roadmap.md](docs/04-roadmap.md) for what
-lands when.
+`python3 -m attack tripwire` and `calibrate`.
+
+**Week 2 in progress:** `haystack-electrum`, the padded query engine, runs real `bdk_wallet` full
+scans. Its tests include a correctness gate that runs upstream `bdk_electrum` beside it on the same
+server and requires identical wallet data. The first score on real padded traffic — six scans of the
+demo wallet at padding 10, sent over a real socket to the local honeypot — is 3.32 bits in every
+round, the ceiling for padding 10 (`tests/test_padded_session.py`). That covers only the many-rounds
+attacker. On a local regtest chain, a wallet with a real history — receives, a two-input spend
+with change, unconfirmed transactions, a reorganisation — ends up identical whether scanned by
+upstream `bdk_electrum` or by Haystack (`regtest/`). The client also writes a session log — every query, whether it was real, and the server's
+answer — checked query for query against the honeypot's own log. But the honeypot answers "nothing
+found" to everything, so the structural attack and activation have nothing real to work on until a
+real server answers. See
+[docs/04-roadmap.md](docs/04-roadmap.md) for what lands when.
 
 ## Built on
 

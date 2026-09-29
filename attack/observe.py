@@ -67,3 +67,36 @@ def check_plain(obs, truth):
         report.append({"round": t, "server": len(q), "wallet": len(r),
                        "unexpected": len(q - r), "missing": len(r - q)})
     return report
+
+
+def load_session(path):
+    """haystack-session/1 from haystack-electrum: one round per line, the server's view and the truth.
+
+    A scripthash's script type is on the chain only once it has history, so it is hidden for unused
+    ones; a query whose answer never arrived (`tx` null) contributes no fact.
+    """
+    obs, truth = [], []
+    with open(path) as fh:
+        for n, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if r.get("format") != "haystack-session/1":
+                raise ValueError(f"{path}:{n}: not a haystack-session/1 line")
+            qs = r["queries"]
+            facts = {q["sh"]: Fact(q["tx"], q["type"] if q["tx"] else None)
+                     for q in qs if q["tx"] is not None}
+            obs.append(Round([q["sh"] for q in qs], facts))
+            truth.append([q["sh"] for q in qs if q["j"] is None])
+    return Observation(obs), GroundTruth(truth)
+
+
+def check_session(session, server):
+    """Per round: did the server receive exactly what the session log says was sent, in that order?"""
+    report = []
+    for t in range(max(len(session.rounds), len(server.rounds))):
+        logged = session.rounds[t].order if t < len(session.rounds) else []
+        received = server.rounds[t].order if t < len(server.rounds) else []
+        report.append({"round": t, "logged": len(logged), "received": len(received),
+                       "same_set": set(logged) == set(received), "same_order": logged == received})
+    return report

@@ -2,10 +2,9 @@
 """A fake Electrum server that answers "nothing found" to everything and
 logs every scripthash it was asked about.
 
-This is the leak, made visible. Point any light wallet at it. Because every
-reply is empty, the wallet never finds a used address, so it walks its entire
-gap limit on both keychains and hands you its complete address set in one
-burst. You are now holding what a real server holds.
+Because every reply is empty, a wallet pointed at this never finds a used
+address, so it walks its entire gap limit on both keychains and hands over
+its complete address set in one burst.
 
     Terminal 1:  python3 scripts/honeypot_electrum.py
     Terminal 2:  point a wallet at tcp://127.0.0.1:50001
@@ -116,8 +115,7 @@ class Handler(socketserver.StreamRequestHandler):
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            # electrum_client batches requests during a full scan; a batch
-            # arrives as a JSON array and must come back as one.
+            # A batch arrives as a JSON array and must come back as one.
             if isinstance(msg, list):
                 out = [handle_one(r, {"conn": conn, "peer": peer,
                                       "batch": batch, "pos": pos})
@@ -168,8 +166,7 @@ def main():
     done = {"already": False}
 
     def finish(*_):
-        # Reachable via Ctrl-C, SIGTERM, or `kill -INT` from another shell --
-        # the summary is the point of the tool, so never lose it.
+        # Reachable via Ctrl-C, SIGTERM, or another shell's `kill -INT`.
         if done["already"]:
             return
         done["already"] = True

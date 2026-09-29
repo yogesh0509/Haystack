@@ -1,4 +1,8 @@
 //! Real bdk_wallet full scans, one connection per round; writes what the wallet itself queried.
+//!
+//! `--padding 1` (the default) is a plain `bdk_electrum` scan. Above 1 the same scan goes through
+//! `haystack-electrum`, with the decoy ledger carried from round to round as a wallet would keep it,
+//! and each round also lists the decoy scripthashes the ledger says were sent.
 
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -9,26 +13,36 @@ use bdk_wallet::bitcoin::hashes::{sha256, Hash};
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Network, ScriptBuf};
 use bdk_wallet::{KeychainKind, Wallet};
+use haystack_electrum::client::{recommended_batch_size, HaystackElectrumClient};
+use haystack_electrum::decoy::decoys_for;
+use haystack_electrum::key::DecoyKey;
+use haystack_electrum::keychain::DecoyKeychain;
+use haystack_electrum::ledger::Ledger;
+use haystack_electrum::session::JsonLinesFile;
 
 type Error = Box<dyn std::error::Error>;
 
 struct Args {
     url: String,
     stop_gap: usize,
-    batch_size: usize,
+    batch_size: Option<usize>,
     rounds: usize,
     seed: String,
     out: String,
+    padding: u32,
+    session: Option<String>,
 }
 
 fn parse_args() -> Result<Args, Error> {
     let mut a = Args {
         url: "tcp://127.0.0.1:50001".into(),
         stop_gap: 50,
-        batch_size: 5,
+        batch_size: None,
         rounds: 1,
         seed: "haystack-capture-demo".into(),
         out: "capture-truth.json".into(),
+        padding: 1,
+        session: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -36,10 +50,12 @@ fn parse_args() -> Result<Args, Error> {
         match flag.as_str() {
             "--url" => a.url = val()?,
             "--stop-gap" => a.stop_gap = val()?.parse()?,
-            "--batch-size" => a.batch_size = val()?.parse()?,
+            "--batch-size" => a.batch_size = Some(val()?.parse()?),
             "--rounds" => a.rounds = val()?.parse()?,
             "--seed" => a.seed = val()?,
             "--out" => a.out = val()?,
+            "--padding" => a.padding = val()?.parse()?,
+            "--session" => a.session = Some(val()?),
             _ => return Err(format!("unknown flag {flag}").into()),
         }
     }
@@ -47,7 +63,7 @@ fn parse_args() -> Result<Args, Error> {
 }
 
 /// Watch-only BIP84 descriptors from a public demo seed; no private key reaches the wallet.
-fn descriptors(seed: &str) -> Result<(String, String), Error> {
+fn descriptors(seed: &str) -> Result<(String, String, Xpub), Error> {
     let secp = Secp256k1::new();
     let seed = sha256::Hash::hash(seed.as_bytes());
     let master = Xpriv::new_master(Network::Bitcoin, seed.as_byte_array())?;
@@ -57,6 +73,7 @@ fn descriptors(seed: &str) -> Result<(String, String), Error> {
     Ok((
         format!("wpkh({origin}{account}/0/*)"),
         format!("wpkh({origin}{account}/1/*)"),
+        account,
     ))
 }
 
@@ -75,8 +92,23 @@ fn keychain_name(k: KeychainKind) -> &'static str {
 
 fn main() -> Result<(), Error> {
     let args = parse_args()?;
-    let (ext, int) = descriptors(&args.seed)?;
+    // Five reals' worth per write by default: bdk's 5 when plain, 50 at padding 10.
+    let batch_size = args
+        .batch_size
+        .unwrap_or_else(|| recommended_batch_size(args.padding));
+    let (ext, int, account) = descriptors(&args.seed)?;
+    let key = DecoyKey::from_xpubs([account]).expect("one account xpub");
+    let mut ledger = Some(Ledger::new(&key));
     let mut rounds = Vec::new();
+    if let Some(path) = &args.session {
+        if args.padding <= 1 {
+            return Err(
+                "--session needs --padding above 1: the plain path is upstream's client".into(),
+            );
+        }
+        // The log appends one line per round, so start each run with an empty file.
+        let _ = std::fs::remove_file(path);
+    }
 
     for round in 0..args.rounds {
         let mut wallet = Wallet::create(ext.clone(), int.clone())
@@ -89,15 +121,40 @@ fn main() -> Result<(), Error> {
             move |k, i, spk| seen.lock().unwrap().push((k, i, spk.to_owned()))
         });
 
-        let client = BdkElectrumClient::new(electrum_client::Client::new(&args.url)?);
-        let update = client.full_scan(request, args.stop_gap, args.batch_size, false)?;
+        // Dropping the client closes its connection, so the next round is a new one.
+        let inner = electrum_client::Client::new(&args.url)?;
+        let update = if args.padding <= 1 {
+            BdkElectrumClient::new(inner).full_scan(request, args.stop_gap, batch_size, false)?
+        } else {
+            let mut client = HaystackElectrumClient::new(inner, key.clone(), args.padding)
+                .with_ledger(ledger.take().expect("ledger returned last round"))
+                .map_err(|e| format!("{e:?}"))?;
+            if let Some(path) = &args.session {
+                client = client.with_session_log(JsonLinesFile::new(path));
+            }
+            let update = client.full_scan(request, args.stop_gap, batch_size, false)?;
+            ledger = Some(client.into_ledger());
+            update
+        };
         let queried = seen.lock().unwrap().clone();
+        let ledger_now = ledger.as_ref().expect("ledger is back");
+        let decoys: Vec<String> = queried
+            .iter()
+            .flat_map(|(k, i, spk)| {
+                let count = ledger_now.get((k.keychain(), *i)).unwrap_or(0);
+                decoys_for(&key, spk, k.keychain(), *i, count).expect("P2WPKH has a decoy shape")
+            })
+            .map(|d| format!(r#""{}""#, scripthash(&d)))
+            .collect();
 
         // The honeypot's fake chain may not connect; the queries were already sent.
         if let Err(e) = wallet.apply_update(update) {
             eprintln!("round {round}: apply_update rejected the fake chain ({e})");
         }
-        eprintln!("round {round}: wallet queried {} scriptPubKeys", queried.len());
+        eprintln!(
+            "round {round}: wallet queried {} scriptPubKeys",
+            queried.len()
+        );
 
         let entries: Vec<String> = queried
             .iter()
@@ -110,8 +167,9 @@ fn main() -> Result<(), Error> {
             })
             .collect();
         rounds.push(format!(
-            r#"{{"round":{round},"queried":[{}]}}"#,
-            entries.join(",")
+            r#"{{"round":{round},"queried":[{}],"decoys":[{}]}}"#,
+            entries.join(","),
+            decoys.join(",")
         ));
     }
 
@@ -119,11 +177,12 @@ fn main() -> Result<(), Error> {
         .network(Network::Bitcoin)
         .create_wallet_no_persist()?;
     let json = format!(
-        r#"{{"format":"haystack-capture/1","network":"bitcoin","external_descriptor":"{}","internal_descriptor":"{}","stop_gap":{},"batch_size":{},"rounds":[{}]}}"#,
+        r#"{{"format":"haystack-capture/1","network":"bitcoin","external_descriptor":"{}","internal_descriptor":"{}","stop_gap":{},"batch_size":{},"padding":{},"rounds":[{}]}}"#,
         ext_pub.public_descriptor(KeychainKind::External),
         ext_pub.public_descriptor(KeychainKind::Internal),
         args.stop_gap,
-        args.batch_size,
+        batch_size,
+        args.padding,
         rounds.join(",")
     );
     std::fs::write(&args.out, json + "\n")?;

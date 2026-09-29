@@ -18,14 +18,14 @@ class CalibrationPointTest(unittest.TestCase):
     def test_plain_electrum_is_zero_everywhere(self):
         reals = random_pool(70, seed="plain")
         s = run(observe([reals, reals, reals]), reals)
-        for v in (s.proxy_bits, s.precision_bits, s.joint_bits, s.truth_bits):
+        for v in (s.precision_bits, s.joint_bits, s.truth_bits):
             self.assertEqual(v, 0.0)
         self.assertEqual(s.precision, 1.0)
 
     def test_perfect_scheme_hits_the_analytic_ceiling(self):
         s = perfect(70, 10)
         want = ceiling(70, 10)
-        got = [s.precision_bits, 100 * s.precision, 100 * s.chance, s.proxy_bits,
+        got = [s.precision_bits, 100 * s.precision, 100 * s.chance,
                s.per_real(s.joint_bits), s.per_real(s.truth_bits), s.advantage]
         for g, w in zip(got, want):
             self.assertAlmostEqual(g, w, places=9)
@@ -38,7 +38,7 @@ class CalibrationPointTest(unittest.TestCase):
 
     def test_headline_metrics_rise_with_padding(self):
         scores = [perfect(40, p) for p in (2, 5, 10, 20)]
-        for f in (lambda s: s.precision_bits, lambda s: s.per_real(s.joint_bits), lambda s: s.proxy_bits):
+        for f in (lambda s: s.precision_bits, lambda s: s.per_real(s.joint_bits)):
             vals = [f(s) for s in scores]
             self.assertEqual(vals, sorted(vals))
 
@@ -51,7 +51,7 @@ class WorseThanChanceTest(unittest.TestCase):
         top = ceiling(2, 5)
         self.assertLess(s.precision, s.chance)
         self.assertAlmostEqual(s.precision_bits, top[0], places=9)
-        self.assertLessEqual(s.per_real(s.truth_bits), top[5] + 1e-9)
+        self.assertLessEqual(s.per_real(s.truth_bits), top[4] + 1e-9)
 
 
 class PrecisionTest(unittest.TestCase):

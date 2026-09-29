@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """address (or scriptPubKey hex) -> Electrum scripthash
 
-The Electrum protocol never sees your addresses directly. It sees
-sha256(scriptPubKey), byte-reversed. That transformation is NOT privacy --
-it is a fixed, public, unkeyed function. Anyone can invert it by
-precomputing scripthashes for every address they care about.
+The Electrum protocol never sees addresses directly, only sha256(scriptPubKey),
+byte-reversed -- a fixed, public, unkeyed function anyone can invert by
+precomputing scripthashes for the addresses they care about.
 
 Usage:
     python3 scripts/scripthash.py 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa

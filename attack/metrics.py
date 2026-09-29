@@ -1,10 +1,6 @@
 """Deanonymisation scores from an adversary posterior and the truth; plain Electrum reads 0 on all but `advantage`.
 
-Mean per-address entropy and its rescaled form (`marg/R`) were implemented and dropped
-(docs/03-metric.md): both are sums of independent per-address terms `H(p(s))`, so both fall as
-padding rises rather than rising, and both are blind to whether the surviving doubt is spread out or
-concentrated into a group -- see the two-wallets worked example in docs/03-metric.md. `joint_bits`
-below is the metric that does see it."""
+Mean per-address entropy was implemented and dropped: it falls as padding rises (docs/03-metric.md)."""
 import math
 from dataclasses import dataclass
 
@@ -15,7 +11,8 @@ from .posterior import LN2, NEG_INF, log_comb
 class Score:
     n_real: int
     n_query: int
-    proxy_bits: float
+    # Scripthashes the attacker hasn't ruled out: a count to print, not a privacy metric.
+    candidates: int
     precision: float
     chance: float
     joint_bits: float
@@ -62,7 +59,7 @@ def score(post, latest_round, real):
     return Score(
         n_real=k,
         n_query=n,
-        proxy_bits=math.log2(max(support, k) / k),
+        candidates=support,
         precision=expected_precision(post.marginal, real, k),
         chance=k / len(latest_round.order),
         joint_bits=post.entropy_bits,

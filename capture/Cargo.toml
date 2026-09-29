@@ -8,3 +8,4 @@ description = "Run real bdk_wallet full scans against an Electrum endpoint and r
 [dependencies]
 bdk_wallet = { version = "2.1.0", default-features = false, features = ["std"] }
 bdk_electrum = "0.23.2"
+haystack-electrum = { path = "../haystack-electrum" }

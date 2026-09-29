@@ -1,10 +1,10 @@
 # tests/
 
-25 unit tests covering `attack/`'s math and logic, the honeypot script's request handling, and the
-end-of-week-1 tripwire against a real captured wallet. Standard-library `unittest`, no dependencies.
+36 tests covering `attack/`'s math and logic, the honeypot script's request handling, the
+end-of-week-1 tripwire against a real captured wallet, and the first real padded session. Standard-library `unittest`, no dependencies.
 
 ```bash
-python3 -m unittest discover -s tests      # all 25, from the repo root
+python3 -m unittest discover -s tests      # all 36, from the repo root
 python3 -m unittest tests.test_posterior   # one file
 ```
 
@@ -17,13 +17,15 @@ python3 -m unittest tests.test_posterior   # one file
 | `test_a2.py` | The structural classifier (`attack/a2.py`) separates careless decoys from real addresses well, stays near chance against decoys generated from the same distribution as the real wallet (the oracle case), and that sending real addresses in a predictable position leaks even against otherwise perfect decoys. |
 | `test_metrics.py` | The calibration anchors: plain Electrum reads `0.00` on every metric, a theoretically perfect scheme hits the exact analytically-computed ceiling, and an attack that does worse than random guessing is never credited as beating the defence. |
 | `test_honeypot.py` | Starts the real honeypot server (`scripts/honeypot_electrum.py`), sends it two fake connections, and checks the log correctly tags each entry with its connection, batch, and position. |
-| `test_regression.py` | Locks in that known-broken decoy schemes (fresh-random, and decoys rotated every few rounds) always score near zero privacy — a permanent guard so the metric can't quietly start rating a known-broken scheme well. |
+| `test_regression.py` | Locks in that known-broken decoy schemes (fresh-random, and decoys rotated every few rounds) always score near zero privacy — a permanent guard so the metric can't quietly start rating a known-broken scheme well — and that `python3 -m attack strategies`, step 4 of the README's five-minute check, still reproduces `docs/00-problem.md` §6. |
 | `test_tripwire.py` | Runs the full pipeline against the real captured honeypot rounds in `fixtures/` and checks it passes the end-of-week-1 bar (`docs/04-roadmap.md`). |
+| `test_session.py` | Reading `haystack-session/1`: reals versus decoys, a script type hidden until its scripthash has history, an unanswered query observed but factless, and the check that catches a session log disagreeing with the server's order. |
+| `test_padded_session.py` | Six real `haystack-electrum` scans at padding 10, against the honeypot: the server received exactly the wallet's reals plus the ledger's decoys, the same set every round, and the many-rounds attacker reads the 3.32-bit ceiling. |
 
 ## `fixtures/`
 
-Two files, produced together against the same six real scans and committed so the tests above don't
-need a live wallet or a running honeypot to reproduce:
+Two pairs of files, each produced together from six real scans and committed so the tests above don't
+need a live wallet or a running honeypot to reproduce. The plain pair:
 
 - `bdk-honeypot-log.json` — what the fake Electrum server (`scripts/honeypot_electrum.py`) recorded
   receiving: 600 entries (6 connections × 100 scripthashes), each tagged with its connection, batch,
@@ -35,9 +37,21 @@ need a live wallet or a running honeypot to reproduce:
 (0 unexpected, 0 missing scripthashes in every round) before it will even evaluate the rest of the
 checks.
 
+The padded set, three files from one run of `capture/ --padding 10 --batch-size 50 --session …`
+against the same honeypot and demo wallet (2026-09-29):
+
+- `haystack-honeypot-log.json` — 6,000 entries (6 connections × 1,000 scripthashes).
+- `haystack-capture-truth.json` — the wallet's 100 real scripthashes per round, plus the 900 decoys
+  its ledger says it sent.
+- `haystack-session.jsonl` — the client's session log: every query in send order, tagged real or
+  decoy, with the server's answer.
+
 ## What isn't covered here
 
-Every test that touches decoys, activation, or the structural classifier runs on synthetic data from
-`attack/synth.py`, because there is no real padded traffic yet — the query engine that would produce
-it (`haystack-electrum`) is Week 2 work. `fixtures/`'s two files are the only real, captured traffic
-in the repo, and they're both plain, unpadded scans.
+Every test that touches activation or the structural classifier runs on synthetic data from
+`attack/synth.py`. The one real padded session in `fixtures/` came from the honeypot, which answers
+"nothing found" to everything: the wallet is never paid, and the server's view carries no
+transaction counts or script types. `haystack-electrum`'s own Rust tests
+(`cargo test -p haystack-electrum`) cover its correctness against an in-memory server, and
+`regtest/`'s gate (`cargo test -p haystack-regtest`) covers a paid wallet on a real regtest chain,
+including confirmed transactions and a reorganisation — see `regtest/README.md`.

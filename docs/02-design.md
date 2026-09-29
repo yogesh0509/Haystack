@@ -15,7 +15,7 @@ still open. This is the document that should be most rewritten as implementation
                                   │
                   ┌───────────────▼────────────────────────────┐
   decoy pool ───► │ decoy selector (deterministic, append-only)│
-  (chain-sourced) │   seed = f(wallet secret), NOT system RNG  │
+  (chain-sourced) │   seed = f(account xpubs), NOT system RNG  │
                   └───────────────┬────────────────────────────┘
                                   │  Q = R ∪ D,  |Q| = padding × |R|
                   ┌───────────────▼────────────────────────────┐
@@ -60,15 +60,30 @@ round since it first appeared. It leaves "watched" exactly two ways, and both ex
   exposure mechanism from vanishing, and append-only decoys do nothing to stop it** — it is accepted
   as a stated limitation for this build, not solved.
 
-**Mitigation: the decoy set is a deterministic function of a wallet secret, and append-only.**
+**Mitigation: the decoy set is a deterministic function of the wallet's xpubs, and append-only.**
 
 - Deterministic, so repeated queries are byte-identical and intersection yields nothing. Concretely,
   decoy `j` of a given position (a keychain and an index) is `HMAC-SHA256(key, keychain ‖ index ‖ j)`
-  — a keyed hash, so nobody without the key can predict or reproduce it, but the same key always
-  reproduces the same decoys.
-- Derived from a wallet secret rather than the system RNG — the key comes from the wallet's seed, or
-  its account xpub for a watch-only wallet — so it survives reinstall and cannot be correlated to
-  another wallet that happened to seed similarly.
+  — a keyed hash, so the same key always reproduces the same decoys.
+- Derived from the wallet's own public keys rather than the system RNG. Resolved 2026-09-28: the key
+  is a tagged SHA-256 (tag `haystack/decoy-key/v1`) of the wallet's account xpubs, each in its 78-byte
+  BIP32 encoding, sorted and deduplicated (`haystack-electrum/src/key.rs`). Every device watching the
+  wallet, and every reinstall, arrives at the same key without being told it, and two wallets with
+  different xpubs get unrelated decoys. The input is the xpub bytes, not the descriptor string,
+  because one wallet's descriptor can be written more than one way (hardened steps as `84'` or `84h`).
+  A different key changes every decoy at once, which the intersection attack reads as every decoy
+  being withdrawn. For the same reason the ledger stores a fingerprint of the key and refuses to be
+  used with a different one.
+- **Note on what the key actually buys (added 2026-09-27).** It reads naturally to say "a keyed hash,
+  so nobody without the key can reproduce the decoys" — as an earlier version of this document did —
+  but that is circular for a watch-only wallet, where the key is derived from the xpub. Anyone who has
+  the xpub can already derive every real address directly, which is a strictly shorter path to `R`
+  than reproducing the decoy set. So key secrecy is not doing any of the defensive work here: an
+  outside adversary who never sees the xpub can't reproduce the decoys regardless of whether the hash
+  is keyed or not, and anyone who does see the xpub has already won by a shorter route. **What the key
+  actually buys is determinism** — the same wallet always regenerating the same decoys, which is what
+  makes A1's intersection defence work. The real security rests on A1 (append-only, so nothing ever
+  withdraws) and A2 (structural indistinguishability), not on the key being a secret.
 - Append-only, because the real set grows as addresses get revealed, and any withdrawal of a decoy
   creates an intersection signal. In practice, a position's decoy count is fixed the first time it is
   queried and never changes afterward, so moving the padding dial later only affects positions queried
@@ -166,6 +181,38 @@ the attack tool first and let it rank the options.
 static pool with the wallet means every Haystack user shares decoys, which is either a strength
 (a shared anonymity set) or a fatal flaw (the adversary knows the entire pool and subtracts it).
 **This needs resolving before the design is credible** — see open questions below.
+
+**Resolved 2026-09-27, for Week 2 only: option 5, HMAC-direct, for positions with no history yet.**
+Decoy `j` of a position is derived from `HMAC-SHA256(key, keychain ‖ index ‖ j)`, with no pool lookup
+at all. **Shape-matched, resolved 2026-09-28:** the HMAC output fills a script of the same type as the
+real script at that position — for the demo wallet's P2WPKH, `OP_0` followed by the first 20 HMAC
+bytes — and the server is queried for that script's scripthash. The earlier wording, "send the HMAC
+output directly as the scripthash", can't be built on the normal client call:
+`batch_script_get_history` takes scripts and hashes them itself (`electrum-client` 0.24.1,
+`types.rs:109`). On the wire nothing changes, since the server receives a 32-byte scripthash either
+way. A real script keeps reals and decoys on one code path, and gives every decoy the wallet's own
+script type, which the session log records for the structural attack. Only the real script's type is
+read, never its hash, so a decoy reveals nothing about the address it covers. Using 20 of the 32
+HMAC bytes leaves the chance that a decoy matches an address anyone has used at about (used
+addresses) ÷ 2¹⁶⁰: with 10⁹ used addresses, 10⁹ ÷ 1.46×10⁴⁸ ≈ 7×10⁻⁴⁰. This is not a repeat of
+option 1 above: option 1 fails because *some* real
+addresses in `Q` have transaction history and no decoy ever does, so any non-zero history stands out
+(the 29.59% row in "Measured, not just argued" above). That gap only exists when the real side has
+history to contrast against. For a position that has never been paid — the demo wallet's entire
+address set, and any freshly-revealed position in a longer-lived wallet — the matching real address
+also has zero history, so there is nothing to contrast, and `docs/03-metric.md`'s calibration confirms
+this design scores at the padding ceiling for that case. It also has no pool to fetch, version, or
+subtract, which removes the open problem above entirely for the positions it covers.
+
+**What this does not cover, and what Week 3 must replace it with.** A bare hash can never acquire
+transaction history, so it cannot cover: (a) a position that already has history the first time it is
+queried — a restored or imported wallet — which needs option 3 or 4's real chain-sourced history from
+the first query onward, or (b) a position that gains history while Haystack is already covering it.
+Case (b) is the activation attack (A1 above), already an accepted limitation independent of decoy
+source — HMAC-direct doesn't make it worse, and no decoy source fixes it without decoys that
+themselves acquire history on the wallet's own schedule, which none of the options here can do. Case
+(a) is new work: Week 3's chain-sourced pool / synthetic wallets must cover it before a restored wallet
+can be scored at anything but chance.
 
 ---
 
@@ -376,8 +423,10 @@ Diagrams 2 and 3 are drawn for that. The alternative, bdk's own pattern, is kept
 The diagrams mix parts that exist with parts that don't. Diagram 1 shows each part's status by the
 style of its border:
 
-- A solid border means the part exists in this repo today. That covers `capture/`, the honeypot and
-  the attack harness, whose 25 unit tests all pass.
+- A solid border means the part exists in this repo today. That covers `capture/`, the honeypot, the
+  attack harness, and `haystack-electrum`'s client, decoy selector, ledger and session log. Updated
+  2026-09-29: those four are now built, so they are solid; the shared cache was agreed after this
+  diagram was drawn, so it is dashed rather than dotted.
 - A dashed border means an earlier section of these docs decided to build it, and no code exists
   yet.
 - A dotted border means this section proposes it for the first time. Each proposal says why it is
@@ -391,7 +440,7 @@ flowchart LR
     subgraph device["On the user's device: trusted"]
         ui["Demo wallet UI<br/>dial, balance, score, bytes used"]
         pool["Decoy pool<br/>candidate scripthashes"]
-        selector["Decoy selector<br/>keyed hash of a wallet secret"]
+        selector["Decoy selector<br/>keyed hash of the wallet's xpubs"]
         ledger["Decoy ledger<br/>decoy count frozen per real position"]
         wallet["bdk_wallet<br/>descriptors, keychains, stored transactions"]
         client["haystack-electrum<br/>sibling crate to bdk_electrum"]
@@ -423,8 +472,7 @@ flowchart LR
 
     classDef decided stroke-dasharray: 8 4
     classDef proposed stroke-dasharray: 2 3
-    class ui,selector,pool,client decided
-    class ledger,cache,slog proposed
+    class ui,pool,cache decided
 ```
 
 This picture answers where each part of Haystack runs, which parts the user has to trust, and which
@@ -437,7 +485,7 @@ The product path runs in five steps:
    It does not know Haystack exists.
 3. The decoy selector looks up each position in the decoy ledger. A position the server has already
    seen keeps the decoys it had. A new position gets `padding − 1` new decoys, picked from the pool
-   by a keyed hash of a wallet secret, so the same wallet always gets the same decoys (A1's
+   by a keyed hash of the wallet's xpubs, so the same wallet always gets the same decoys (A1's
    mitigation above).
 4. `haystack-electrum` sends each real scripthash together with its decoys, shuffled, and collects
    every answer.
@@ -448,15 +496,22 @@ The server is the only part on the far side of the trust boundary. It receives e
 `Q` and answers all of them. The design assumes it answers honestly. A lying server is out of scope
 (`docs/01-threat-model.md`), because it can already show any client a false balance.
 
-The measurement path exists today, but only for plain syncs: `capture/` runs real `bdk_wallet` full
-scans against the honeypot and records what the wallet itself sent, which is the ground truth;
-`scripts/honeypot_electrum.py` records what arrived at the server, which is the adversary's view; and
-`python3 -m attack tripwire` checks the two against each other, passing all four of its checks against
-the committed fixtures. `capture/README.md` and `attack/README.md` have the exact commands and the
+The measurement path exists today in three forms (updated 2026-09-29). For plain syncs,
+`capture/` runs real `bdk_wallet` full scans against the honeypot and records what the wallet itself
+sent, which is the ground truth; `scripts/honeypot_electrum.py` records what arrived at the server,
+which is the adversary's view; and `python3 -m attack tripwire` checks the two against each other,
+passing all four of its checks against the committed fixtures. For padded syncs, `capture/ --padding
+10 --session …` does the same through `haystack-electrum` and also writes the session log. For a
+paid wallet, which neither the honeypot nor the public demo seed can ever be, `regtest/` runs
+`bitcoind` and `electrs` on a local regtest chain and gives a wallet a real history (receives,
+address reuse, a batched payout, a two-input spend with change, unconfirmed transactions, a
+reorganisation); `regtest/tests/gate.rs` requires padded and plain scans of it to leave the wallet
+identical. `capture/README.md` and `attack/README.md` have the exact commands and the
 current numbers — this stays here only as a pointer, so the five-step product path above has
 something real to contrast against.
 
-The session log is proposed because the honeypot can't measure real decoys. The honeypot answers
+The session log exists (built 2026-09-29, `haystack-electrum/src/session.rs`) because the honeypot
+can't measure real decoys. The honeypot answers
 "nothing found" to every query. Decoys drawn from the chain have real history, and the structural
 attack needs the server's view of that history: each scripthash's transaction count and script type
 (`Fact` in `attack/observe.py`). The Haystack client receives exactly those answers, and it also
@@ -636,22 +691,52 @@ sync is a full scan (gotcha 4), so a sync and a full scan are the same operation
   saved blocks to the agreement point, which is the newest block whose hash the wallet and the server
   agree on. Anything the wallet saved above that point was replaced by a reorganisation of the chain,
   and it is rebuilt from the server's blocks.
-- **Plan the round.** The crate queues every position that was queried in any earlier round, each
-  with its frozen decoys, shuffled across the whole range. On a wallet's first sync the queue starts
-  empty.
-- **Build and send a batch.** A batch holds whole groups, where a group is one real scripthash and all
-  of its decoys. The batch is shuffled and sent in one write. Keeping groups whole means each batch
-  holds exactly as many reals as groups, which the attacker could work out anyway.
+- **Plan the round.** Resolved 2026-09-28: the round splits into two pools, not one queue. The
+  **confirmed pool** is every position an earlier round already established, each with its frozen
+  decoys — fully known in advance, so nothing about it needs a network round trip to identify. On a
+  wallet's first sync this pool is empty. The **undiscovered pool** is whatever the ledger hasn't yet
+  confirmed: the whole range on a first sync, or just the tail beyond the last confirmed boundary once
+  new activity moves it (diagram 2's "Confirm dial change" case aside). This split, not upstream's
+  behaviour, is what makes shuffling and the stop-gap walk compatible — see the next two bullets.
+- **Build and send a batch.** A batch is a pure networking unit — up to `batch_size` scripthashes in
+  one write — and is **not** required to hold whole groups; an earlier version of this document said
+  otherwise, but that costs real information. Confirmed-pool material can be freely shuffled into any
+  batch in any mix, since none of it depends on an answer not yet received. Forcing every batch to
+  hold exactly one group instead makes each batch's real count exact and computable from
+  `batch_size / padding`. Concretely, on the demo wallet's 1,000-scripthash round: shuffled freely, the
+  adversary's candidate space is "choose 100 of 1,000," `log2(C(1000,100)) ≈ 464` bits; forced into 20
+  batches of one group each, it collapses to "choose exactly 5 from each of 20 fixed 50-item batches,"
+  `20 × log2(C(50,5)) ≈ 420` bits — handing over roughly 44 bits for no benefit. So a batch should draw
+  as much confirmed-pool material as is available to dilute whatever undiscovered-pool material it also
+  carries, rather than being built one group at a time.
 - **Split answers by tag.** Answer i belongs to request i, and diagram 4 explains why that holds.
   Real answers update their keychain's stop-gap counter and last used index. Decoy answers go to the
   decoy side and never reach the response (gotcha 2).
 - **Fetch missing transactions.** Reals and decoys follow the same rule here: fetch a transaction only
   if the shared cache lacks it (gotchas 1 and 3). A transaction whose computed txid differs from the
   requested one is rejected, which is the check ported from master.
-- **Check stop gaps.** If each keychain ends with a full stop gap of unused positions, scanning is
-  done. Otherwise the crate extends the range. It adds just enough new positions to reach the gap,
-  gives each one `padding − 1` decoys at the current dial, and saves their ledger entries before the
-  batch leaves the device.
+- **Check stop gaps.** The crate evaluates the same consecutive-unused counter upstream uses, in
+  ascending index order per keychain, but over the two pools differently. For the confirmed pool this
+  is a pure local computation over answers already in hand, once the round's batches are back — no
+  further round trip unless it reveals the boundary moved (the third-sync case below). For the
+  undiscovered pool, the crate extends by the keychain's **shortfall**: how many more positions it
+  needs to end in `stop_gap` unused ones in a row. Corrected 2026-09-28 — an earlier version of this
+  bullet said the extension had to go one `batch_size` segment at a time, which is wrong. The
+  shortfall is known before any answer arrives, and answers can only raise it: a used position resets
+  the unused run and demands more positions, and an unused one never demands fewer. So every position
+  in the current shortfall will be queried whatever the answers say, and they all go out as one stage.
+  Another stage is needed only when an answer shows a used position inside the last `stop_gap`, and
+  each such stage is triggered by a different used position, so a round takes at most one stage more
+  than the number of used positions it finds. The positions queried are exactly those upstream's
+  sequential walk reaches (`haystack-electrum/src/planner.rs` checks this against a reference walk on
+  2,000 random histories). The only difference is upstream's extra overshoot: up to `batch_size − 1`
+  positions past the stop point, sent and then ignored. Each newly-confirmed position gets
+  `padding − 1` decoys at the current dial, with its ledger entry saved before the batch leaves the
+  device. Reusing the ledger this way is a deliberate divergence from `populate_with_spks`, which
+  restarts its unused-position counter at zero on every call (0.23.2 line 279) and has no memory of a
+  prior scan; Haystack already needs the ledger for the decoy-freeze requirement, so leaning on it here
+  costs nothing extra and turns the undiscovered-pool walk from "the whole round, every time" into "the
+  exception, only when something changed."
 - **Fetch proofs.** This step is copied from `batch_fetch_anchors` (0.23.2 line 475), but it runs for
   every confirmed transaction, real or decoy. Each merkle proof is checked against its block header
   before the anchor is kept.
@@ -664,17 +749,22 @@ sync is a full scan (gotcha 4), so a sync and a full scan are the same operation
 
 Worked example, the demo wallet at padding 10:
 
-- **First sync.** The queue starts empty, so the stop-gap check extends both keychains to positions
-  0 to 49. That saves 100 ledger entries of 9 decoys each. All 1,000 answers come back empty, because
-  the wallet has never been paid. Both keychains now end with 50 unused positions, so scanning stops.
-  No transaction is confirmed, so there are no proofs to fetch.
-- **Second sync, with nothing changed.** The plan queues the same 100 groups, which is the same 1,000
-  scripthashes in a new order. The stop gap is already met.
-- **Third sync, after a payment to external index 3.** Index 3 now has history, so the last used
-  index on the external keychain becomes 3. That keychain now ends with only 46 unused positions,
-  indices 4 to 49. So the crate extends it to positions 50 to 53, with 4 × 9 = 36 new decoys.
-  Upstream would scan the same range: 0.23.2 counts unused positions from index 0 and stops at the
-  fiftieth in a row, which is index 53.
+- **First sync.** The confirmed pool starts empty, so each keychain's shortfall is the full 50. Both
+  keychains' positions 0 to 49 go out in a single stage, and the crate saves 100 ledger entries of 9
+  decoys each before it sends anything. All 1,000 scripthashes are known before the first batch
+  leaves, so they are shuffled together across every batch, exactly as in later syncs. All 1,000
+  answers come back empty, because the wallet has never been paid, so both keychains end with 50
+  unused positions and scanning stops. No transaction is confirmed, so there are no proofs to fetch.
+- **Second sync, with nothing changed.** The ledger already confirms all 100 positions, so the entire
+  round is confirmed-pool material: no sequential extension, no undiscovered segments. All 1,000
+  scripthashes (100 reals plus their frozen decoys) can be shuffled freely into any batches in any
+  order, sent, and evaluated in one local pass once the answers are back.
+- **Third sync, after a payment to external index 3.** Evaluating the confirmed pool's own answers
+  locally shows index 3 now has history, so the last used index on the external keychain becomes 3.
+  That keychain's confirmed run drops to 46 unused positions, indices 4 to 49 — short of the 50-position
+  stop gap. So the crate runs the sequential extension loop again, but only for the shortfall: one more
+  segment, positions 50 to 53, with 4 × 9 = 36 new decoys. Upstream would scan the same range: 0.23.2
+  counts unused positions from index 0 and stops at the fiftieth in a row, which is index 53.
 
 ### 4. One sync on the wire
 

@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Query a public Electrum server directly, the way your wallet does.
 
-This is the whole protocol. There is no authentication, no session, no
-privacy layer -- you open a socket, send a scripthash, and the server
-returns the complete history and balance for it.
-
-Run it and note what you did NOT have to prove: that the address is yours,
-that you have any right to the data, or who you are.
+There is no authentication, no session, no privacy layer: you open a socket,
+send a scripthash, and the server returns the complete history and balance
+for it, without proof of ownership or identity.
 
 Usage:
     python3 scripts/electrum_probe.py <scripthash>
@@ -27,8 +24,7 @@ DEFAULT_SERVER = "electrum.blockstream.info:50002"
 class Electrum:
     def __init__(self, host, port, timeout=20):
         ctx = ssl.create_default_context()
-        # Electrum servers routinely use self-signed certs; the protocol has no
-        # PKI story. Worth noticing as its own trust problem.
+        # Electrum servers routinely use self-signed certs; the protocol has no PKI story.
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         raw = socket.create_connection((host, port), timeout=timeout)

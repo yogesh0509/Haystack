@@ -1,0 +1,20 @@
+[package]
+name = "haystack-electrum"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Sibling crate to bdk_electrum: the same full_scan surface, with decoy padding injected at the batch level. See docs/02-design.md, 'Sync integration'."
+
+[features]
+default = ["bdk_wallet"]
+
+[dependencies]
+bdk_core = "0.6.3"
+electrum-client = { version = "0.24.1", default-features = false, features = ["proxy", "use-rustls"] }
+rand = "0.8"
+serde_json = "1"
+# Only so `full_scan` accepts `bdk_wallet::KeychainKind` as its keychain type.
+bdk_wallet = { version = "2.1.0", default-features = false, features = ["std"], optional = true }
+
+[dev-dependencies]
+bdk_electrum = "0.23.2"

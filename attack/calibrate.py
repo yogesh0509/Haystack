@@ -13,7 +13,6 @@ COLUMNS = (
     ("prec-b", lambda s: s.precision_bits),
     ("prec%", lambda s: 100 * s.precision),
     ("chance%", lambda s: 100 * s.chance),
-    ("proxy", lambda s: s.proxy_bits),
     ("joint/R", lambda s: s.per_real(s.joint_bits)),
     ("truth/R", lambda s: s.per_real(s.truth_bits)),
     ("adv", lambda s: s.advantage),
@@ -23,14 +22,12 @@ LEGEND = """\
 prec-b   -log2(max(prec, chance)): 0 for plain Electrum, log2(padding) at the ceiling     [headline]
 prec%    expected share of real among the adversary's top-|R| guesses                     [headline]
 chance%  |R| / |Q|: what a same-size random guess gets right, for comparison              [headline]
-proxy    log2(|support| / |R|), the set-size proxy; kept for the regression tests   [docs: implemented]
 joint/R  entropy of the posterior over the real subset, per real address        [calibration check]
 truth/R  -log2 P_adversary(true R) per real: bits still missing, correctness-aware   [calibration check]
 adv      prec - chance; reads 0 for plain Electrum AND for a perfect scheme, kept as a secondary view
 
-Mean per-address entropy and its rescaled form (marg/R) were implemented and dropped: both fall as
-padding rises rather than rising, and both stay flat whether the surviving doubt is spread over many
-addresses or concentrated into one group -- see docs/03-metric.md."""
+Mean per-address entropy was implemented and dropped: it falls as padding rises -- see
+docs/03-metric.md."""
 
 
 @dataclass
@@ -56,7 +53,7 @@ def ceiling(n_real, padding):
     q = round(padding * n_real)
     top = math.log2(q / n_real)
     joint = log_comb(q, n_real) / LN2 / n_real
-    return [top, 100 * n_real / q, 100 * n_real / q, top, joint, joint, 0.0]
+    return [top, 100 * n_real / q, 100 * n_real / q, joint, joint, 0.0]
 
 
 def _mean(xs):
@@ -154,7 +151,7 @@ def suite(real_rounds=None, honeypot_obs=None, padding=10, seeds=5, rounds=9, po
 
 
 def _is_zero(s):
-    return max(s.proxy_bits, s.precision_bits, s.joint_bits, s.truth_bits) <= 1e-9
+    return max(s.precision_bits, s.joint_bits, s.truth_bits) <= 1e-9
 
 
 def rounds_table(title, scores):
@@ -162,6 +159,38 @@ def rounds_table(title, scores):
     lines = [title, head]
     for t, s in enumerate(scores, 1):
         lines.append(f"  {t:>5} {s.n_real:>5} {s.n_query:>6}" + "".join(_fmt(f(s)) for _, f in COLUMNS))
+    return "\n".join(lines)
+
+
+STRATEGIES = (("fresh", "fresh"), ("epoch", "epoch/3"), ("fixed", "fixed"))
+
+
+def strategies(n_real=70, padding=10, rounds=6, pool_size=100_000, seed=0):
+    """Why fresh random decoys collapse and deterministic ones hold, per docs/00-problem.md section 6.
+
+    Each cell is the scripthashes the many-rounds attacker (T1) hasn't ruled out, and precision in
+    bits. Decoys are otherwise indistinguishable from real addresses here, so these are an upper
+    bound; the structural attack is what tests that assumption.
+    """
+    real = synth.extend([synth.random_pool(n_real, seed="strategies")], rounds)
+    pool = synth.random_pool(pool_size)
+    plain = per_round(synth.observe(synth.pad(real, "plain", 1, pool)), real)[-1]
+    columns = [per_round(synth.observe(synth.pad(real, s, padding, pool, seed)), real)
+               for s, _ in STRATEGIES]
+    decoys = round((padding - 1) * n_real)
+    lines = [
+        f"real addresses : {n_real}",
+        f"decoys / round : {decoys}  ({padding:g}x bandwidth)",
+        f"decoy pool     : {pool_size}",
+        f"baseline       : plain Electrum sends {n_real} scripthashes, {plain.precision_bits:.2f} bits",
+        "each cell      : scripthashes not yet ruled out (precision in bits), many-rounds attacker",
+        "",
+        " round | " + " | ".join(f"{label:>18}" for _, label in STRATEGIES),
+        "-" * (9 + 21 * len(STRATEGIES)),
+    ]
+    for t in range(rounds):
+        cells = [f"{c[t].candidates:>5} ({c[t].precision_bits:4.2f} bits)" for c in columns]
+        lines.append(f"{t + 1:>6} | " + " | ".join(f"{cell:>18}" for cell in cells))
     return "\n".join(lines)
 
 
@@ -183,9 +212,9 @@ def tripwire(honeypot_path, capture_path, padding=10, rounds=6, pool_size=100_00
         ("plain Electrum reads 0.00 bits on every metric in every round",
          bool(plain) and all(_is_zero(s) for s in plain)),
         (f"fresh-random decoys read <= {tol:.2f} bits from round 3 on",
-         len(fresh) >= 3 and all(s.proxy_bits <= tol and s.precision_bits <= tol for s in fresh[2:])),
+         len(fresh) >= 3 and all(s.precision_bits <= tol for s in fresh[2:])),
         ("the same metric reads log2(padding) for fixed decoys (guards a metric stuck at 0)",
-         all(abs(s.proxy_bits - top) < 1e-9 and abs(s.precision_bits - top) < 1e-9 for s in fixed)),
+         all(abs(s.precision_bits - top) < 1e-9 for s in fixed)),
     ]
     lines = [f"Tripwire: {honeypot_path} ({len(obs.rounds)} connections) + {capture_path} "
              f"({len(truth.rounds)} rounds)", ""]

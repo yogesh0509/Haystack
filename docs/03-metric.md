@@ -3,10 +3,11 @@
 **Status: implemented and calibrated.** Every metric below is computed by `attack/`: evidence from
 each attack combines into one posterior belief (`attack/posterior.py`), scored against ground truth
 (`attack/metrics.py`), and checked against a 13-configuration calibration suite plus a real-capture
-tripwire (`attack/calibrate.py` — `python3 -m attack calibrate` / `tripwire`). All 25 unit tests pass.
-What's still open is in the TODOs at the end: mainly, all of this has run only on synthetic decoy
-traffic plus one real plain-Electrum capture, because the query engine that would send real padded
-traffic (`haystack-electrum`, `docs/04-roadmap.md` Week 2) doesn't exist yet.
+tripwire (`attack/calibrate.py` — `python3 -m attack calibrate` / `tripwire`). All 36 Python tests
+pass. Real padded traffic now exists: six `haystack-electrum` scans at padding 10 against the honeypot
+read 3.32 bits, the ceiling, in every round (`tests/test_padded_session.py`). What's still open is in
+the TODOs at the end: mainly, the structural attack and activation have run only on synthetic
+traffic, because the honeypot can't supply the server's real answers they need.
 
 The problem statement asks for "a meaningful metric that reads 0 for an ordinary Electrum query."
 This document defines that metric, explains how it's calibrated, and states clearly what the number
@@ -141,24 +142,6 @@ Two special cases worth having fixed in mind before the sections below use them:
 
 ## The metrics
 
-### The set-size proxy
-
-`scripts/intersection_sim.py`'s original metric, still computed as `proxy_bits`:
-
-```
-score = log2(|surviving candidates| / |R|)      , 0 when surviving <= |R|
-```
-
-In the language above, this is what the belief gives if every surviving candidate is left at weight
-1 — the uniform special case, rather than the real per-address weights an attack actually produced.
-It has one job now: it is what `docs/00-problem.md` §6 and the permanent regression tests
-(`tests/test_regression.py`) are built on, so it stays in the table as a fixed point to check new
-attacks against, alongside precision. It is not used for anything else, because whenever an attack
-does produce uneven weights — which A2 always does — it silently reports the same number as if the
-attack had learned nothing about which survivors look real. Row 10 of the calibration suite below
-shows the gap directly: the proxy reads the same 3.32 bits whether or not the structural attack is
-switched on, while precision moves from 10.00% to 79.85%.
-
 ### The headline: precision in bits
 
 Rank every candidate in `Q` by `p(s)` and take the attacker's top `|R|` guesses — its best single
@@ -235,31 +218,26 @@ happening. That is why it is kept only as a check, next to truth bits, rather th
 privacy number on its own — see "Open questions" below for where a corrected, whole-wallet version of
 this metric belongs.
 
-### Dropped: mean per-address entropy and its rescaled form
+### Dropped: mean per-address entropy, its rescaled form, and the set-size proxy
 
-Both were implemented, measured, and removed. The numbers are kept here as the record of why, so
-nobody re-adds them without re-discovering the same problem.
+Three metrics were implemented, measured, and removed. No code for them remains; the reasons stay so
+nobody re-adds them without rediscovering the problem.
 
-**Mean per-address entropy**, `H(p) = -p·log2(p) - (1-p)·log2(1-p)` averaged over every address in
-`Q`, falls as padding rises rather than rising: at the uniform prior it equals `H(1/padding)`, which
-is `1.00` bit at padding 2, `0.47` at padding 10, and `0.29` at padding 20. More privacy read as a
-*lower* number, which is backwards for a metric meant to track a defence getting stronger.
-
-**Its rescaled form** (the same sum, divided by `|R|` instead of `|Q|`, so it rises with padding
-instead of falling) does rise correctly, but doesn't fix the actual problem: it is still a sum of
-independent per-address terms `H(p(s))`, so it is blind to whether the remaining doubt is spread over
-many addresses or concentrated into a group — the same blind spot as mean entropy, just rescaled to
-trend the right way. Measured directly on the two-query example above (a real check, not a toy): both
-queries read the rescaled sum at `4.69`, identical, even though joint entropy — the metric that does
-see the difference — reads `4.64` and `3.32` for the two respectively.
-
-Both were also tested on a smaller toy: 1 real address hidden among 9 decoys, then a structural
-attack narrows the field to 5 tied survivors that still include the real one:
-
-| Metric | Before | After | What moved |
-|---|---|---|---|
-| Mean per-address entropy | 0.469 bits | 0.361 bits | Fell by ~0.11 bits — about a tenth of the 1.00-bit loss that joint entropy (`log2(10) → log2(5)`) reports for the identical attack. |
-| Its rescaled sum | 4.69 bits | 3.61 bits | The same ~1.08-bit fall — the number looks larger here only because dividing by `|R| = 1` in this toy doesn't shrink it the way dividing by 100 does in the two-query example above; it's the identical blind spot. |
+- **Mean per-address entropy**, `H(p) = -p·log2(p) - (1-p)·log2(1-p)` averaged over every address in
+  `Q`, falls as padding rises: at the uniform prior it equals `H(1/padding)` — `1.00` bit at padding
+  2, `0.47` at 10, `0.29` at 20. More privacy reads as a lower number, backwards for a metric meant to
+  track a defence getting stronger.
+- **Its rescaled form** (the same sum divided by `|R|` instead of `|Q|`) does rise with padding, but
+  it is still a sum of independent per-address terms, so it can't see whether the remaining doubt is
+  spread out or concentrated in a group. On the two queries in the table above it reads `4.69` for
+  both, while joint entropy, which does see the difference, reads `4.64` and `3.32`.
+- **The set-size proxy**, `log2(surviving candidates / |R|)`, Week 0's first metric, adds nothing
+  precision in bits doesn't. When the only evidence is ruling candidates out, as in the intersection
+  attack, precision among `S` equally likely survivors is `|R| / S`, so precision in bits is
+  `log2(S / |R|)`: the same number (checked on `python3 -m attack strategies`'s setting, equal to
+  within 1.6×10⁻¹⁶). When the evidence is uneven, the proxy ignores it: with the structural attack on
+  careless chain decoys it still read the full 3.32 bits while precision was 79.85%. Removed
+  2026-09-29.
 
 ### Reporting
 
@@ -269,161 +247,12 @@ than reality without actually getting guesses right. Joint entropy and truth bit
 alongside it as a calibration check on the belief itself, not as a second privacy number — a gap
 between them is a warning that the attack model is overconfident, as the case above shows. Adversary
 advantage is kept as a secondary column, for the reason it used to be considered as the headline:
-restating a specific gain as "twice as good as guessing" needs no logarithm. The set-size proxy is
-kept for its regression-test role, pinned to the uniform-weight case `docs/00-problem.md` §6
-established.
+restating a specific gain as "twice as good as guessing" needs no logarithm.
 
 None of this is combined into one number. Averaging or weighting these together would mean choosing
 weights, and that choice is itself a place a result could end up looking better than it is. Keeping
 them separate means each checks the others: precision moving while the calibration check doesn't (or
 the reverse) is itself a signal worth noticing.
-
----
-
-## The calibration suite
-
-The score is only as honest as the baselines it's checked against. `python3 -m attack calibrate` runs
-every configuration below and prints all seven columns for each; `python3 -m attack tripwire` runs the
-four pass/fail checks that gate Week 1 (`docs/04-roadmap.md`). Both are implemented and passing,
-against 5 synthetic seeds per row plus the real captured wallet
-(`tests/fixtures/bdk-capture-truth.json`, `tests/fixtures/bdk-honeypot-log.json`).
-
-| Configuration | Expected result | What it checks |
-|---|---|---|
-| Plain Electrum, real honeypot capture | `0.00` bits, every round | The definitional zero, on real `bdk_wallet` traffic, not simulated. |
-| Random decoys, fresh every round | `0.00` bits by round 3 | Reproduces the collapse in `docs/00-problem.md` §6. A metric that rates this well is wrong — a permanent regression check. |
-| Random decoys, epoch/3 rotation | `0.00` bits once a second epoch is seen | Rotation is worse than none; also a permanent regression check. |
-| Random decoys, fixed (deterministic) | ceiling | The many-rounds attack alone learns nothing once decoys stop changing. |
-| Fixed decoys from a bundled public pool | `0.00` bits | An adversary who knows the pool subtracts it exactly — the subtractable-pool risk in `docs/02-design.md` open question 1, made concrete as a number. |
-| Fixed decoys, wallet paid over 12 rounds, unpadded increments | below ceiling | The delta corollary: an unpadded new address is exposed. |
-| Append-only with per-increment padding | near ceiling, aside from activation | The delta corollary's fix works, once activation is separately accounted for. |
-| Careless chain-sourced / random-scripthash / oracle decoy wallets, structural attacker | ceiling only for the oracle | The structural attack (A2) separates careless decoys; only decoy groups shaped like the real wallet hold up. |
-| Decoy wallets, reals sent first | below ceiling, at the structural level only | Query order leaks (A3) even with otherwise perfect decoys — see the mapping note under "Open questions" for where order is actually checked. |
-
-The second and third rows matter most: **a metric that gives a good score to a known-broken scheme is
-disqualifying**, and every run checks it automatically.
-
-Every row's exact numbers depend on the random seeds and the assumed feature distributions in
-`attack/synth.py` for the synthetic rows, so they are not pinned into this document — run the command
-for the current numbers. The ceiling column is exact and analytic, not sampled.
-
-### Ceilings, one per metric
-
-Each column has its own ceiling — its value at the uniform prior, where the attacker has eliminated
-nothing:
-
-- **Precision and chance** both equal `1/padding` — e.g. `10%` at padding 10 — so **precision bits**
-  reach `log2(padding)`, `3.32` bits at padding 10.
-- **The set-size proxy** reaches the same `log2(padding)`, by construction.
-- **Joint entropy and truth bits**, per real address, reach `log2(C(padding × |R|, |R|)) / |R|` —
-  `4.64` bits per real address at padding 10, `|R| = 100`. This is a different number from the 3.32
-  above measuring a different thing: precision cares about a single guess, joint entropy about naming
-  the whole set. Row 4 of the calibration suite sits at both ceilings at once, since it has no
-  structural evidence at all.
-- **Adversary advantage** reaches `0` — a perfect scheme gives the adversary exactly the chance rate,
-  no better.
-
-All four are computed exactly (`ceiling()`, `attack/calibrate.py`), and every calibration row is
-checked against them.
-
----
-
-## What the score does not mean
-
-Three caveats stated here rather than left implicit:
-
-**It is a lower bound on the adversary's power, not an upper bound.** The number says "none of the
-attacks we implemented recovered the set." An attack nobody wrote is invisible to it. This is the
-central limitation, and it's surfaced in the demo UI directly, not only in this document.
-
-**It is not a cryptographic guarantee.** There is no reduction, no hard problem, no negligible
-function. Adversary advantage shrinks with padding; it does not vanish.
-
-**It is specific to what the adversary knows.** A score that doesn't say what the adversary was
-assumed to know when it was measured is meaningless — see the note on adversary strength at the end
-of `docs/02-design.md`. Every reported score names that, and the on-chain case is expected to look
-considerably worse than the multi-round case.
-
----
-
-## Guarding against a flattering result
-
-The failure mode is a weak attack suite producing a high score. Commitments made to avoid it:
-
-1. **Attacks before defences.** The attack harness is Week 1, ahead of the query engine in Week 2 —
-   see `docs/04-roadmap.md`. Whatever ships first is the attacker, not the padding scheme.
-2. **Adversarial self-review.** For each attack, write down the attack that would beat it, then
-   implement that too. Stop when out of ideas, and say so in the writeup.
-3. **Regression the known-broken schemes.** Fresh-random and epoch-rotation decoy strategies stay in
-   the suite permanently. If they ever score well, the metric regressed.
-4. **Publish the attack suite prominently.** Credibility rests on the attacks being good, so they are
-   as visible in the submission as the defence.
-
----
-
-## TODOs
-
-**Week 1 — the attacker: done.**
-
-- [x] Attack harness: evidence from every attack combines into one posterior (`attack/harness.py`,
-      `attack/posterior.py`); every metric is read off it.
-- [x] A1 — persistence, cohort counts and activation, running against real captured query logs as
-      well as synthetic ones (`attack/a1.py`, `tests/test_a1.py`, `tests/test_tripwire.py`).
-- [x] A2 — structural classifier: transaction-count bucket, script type, and query-order position,
-      mixed over the wallet's possible script type (`attack/a2.py`, `tests/test_a2.py`).
-- [x] Metric implementation: precision in bits and percent plus the chance rate (headline), the
-      set-size proxy (regression fixed point), joint entropy and truth bits (calibration check),
-      adversary advantage (secondary) — `attack/metrics.py`, `attack/calibrate.py`. Mean per-address
-      entropy and its rescaled form were implemented and dropped; see above.
-- [x] Regression test: fresh-random and epoch-rotation strategies collapse to ≈0
-      (`tests/test_regression.py`).
-- [x] Tripwire passing on the real captured wallet (`python3 -m attack tripwire`,
-      `tests/test_tripwire.py`).
-
-**Before Week 2's first real score can use anything beyond the many-rounds attack:**
-
-- [ ] **Session log and a loader for it.** The honeypot answers "nothing found" to everything, so it
-      can check that the server received the right scripthashes, but it can't supply the transaction
-      counts and script types the structural attack or activation need. `docs/02-design.md`'s
-      proposed session log (tagging each query real/decoy, with the server's real answer) needs a
-      loader alongside `load_honeypot` in `attack/observe.py` before a real padded sync can be scored
-      on anything but the many-rounds level.
-- [ ] **Label synthetic-feature scores as such wherever they're shown.** `attack/synth.py`'s
-      script-type and transaction-count tables are declared assumptions, not chain measurements, in
-      its own docstring; any structural-level score computed from them (the synthetic rows above, and
-      any real session scored before Week 3's decoy work lands) should say so next to the number, not
-      only in this document.
-- [ ] **Reconsider decoy pool v1 for positions with no history yet.** The pool-aware row above
-      measures exactly the risk `docs/04-roadmap.md` already accepts for Week 2's bundled
-      chain-sourced pool: an adversary who knows the pool subtracts it, reading `0.00` bits. Sending
-      the deterministic `HMAC-SHA256(key, keychain ‖ index ‖ j)` value directly as the scripthash for
-      a position with no history yet — rather than using it to pick from a pool — has no chain
-      history and no shared pool to subtract, so it should score at the ceiling instead; it doesn't
-      help a position that already has history when first queried (a restored wallet), which stays
-      Week 3's problem alongside the rest of decoy quality.
-
-**Deferred, not urgent because nothing built yet depends on them:**
-
-- [ ] A whole-wallet (group-level) version of the effective anonymity set — "how many candidate
-      wallets are left," rather than "how many candidate addresses" — to pair with a future on-chain
-      / co-spend attack. Not urgent because that attack isn't built (`docs/02-design.md`'s "on-chain"
-      case).
-- [ ] A per-address calibration check usable on a single real session: among addresses the belief
-      rates near some probability `p`, check that roughly that share are actually real. The
-      truth-bits-versus-joint-entropy check above only means something averaged over many independent
-      sessions, which the synthetic suite has and a single real wallet doesn't.
-- [ ] A count of real addresses the belief is at least, say, 90% confident about — considered this
-      round and set aside for now, not dropped. Useful for making a single exposed paid address show
-      up as a number rather than only as a shift in an averaged percentage.
-
-**Week 2 onward, unchanged by this update — see `docs/04-roadmap.md`:**
-
-- [ ] Run the attacker against the real query engine once it exists, dependent on the session log
-      above. First non-simulated score.
-- [ ] Iterate against the structural attack with real decoy quality work until synthetic groups stop
-      being separable (Week 3), replacing the assumed feature distributions along the way.
-- [ ] The bandwidth-versus-score curve across padding levels — the headline result.
-- [ ] Live score, labelled with what the adversary was assumed to know, in the demo UI (Week 4).
 
 ---
 
