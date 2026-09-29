@@ -1,5 +1,5 @@
 //! Sibling crate to `bdk_electrum`: the same `full_scan` surface, with decoy padding injected at
-//! the batch level. See `docs/02-design.md`, "Sync integration," for why this can't be a wrapper
+//! the batch level. See `docs/02-design.md`, "haystack-electrum: the padded sync client," for why this can't be a wrapper
 //! around `bdk_electrum` itself.
 
 pub mod client;

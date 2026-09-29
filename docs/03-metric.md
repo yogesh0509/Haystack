@@ -276,7 +276,7 @@ of what was open and why, in the style of `docs/02-design.md`'s resolved sync-in
    check," above. It stays, but only as a check next to truth bits, not as a privacy number by itself.
 3. **Does the adversary know `|R|`?** Yes, and not only as a scoring convenience. `docs/01-threat-model.md`
    already grants the adversary the wallet software's behaviour, including the gap limit; every sync
-   being a full scan (`docs/02-design.md`, "Sync integration," resolved 2026-09-25) means a never-paid
+   being a full scan (`docs/02-design.md`, "haystack-electrum," resolved 2026-09-25) means a never-paid
    wallet's real count is fixed by the gap limit alone, and the capture fixture confirms it: all 6 real
    rounds hold exactly 100 scripthashes. `attack/harness.py`'s `knowledge()` grants the attacker the
    real count per first-seen cohort, consistent with this.
