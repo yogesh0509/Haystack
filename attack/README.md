@@ -27,14 +27,19 @@ python3 -m attack tripwire --honeypot tests/fixtures/bdk-honeypot-log.json \
 python3 -m attack calibrate --honeypot tests/fixtures/bdk-honeypot-log.json \
                              --capture  tests/fixtures/bdk-capture-truth.json
 
-# score one real session round by round (tier T0 or T1 only — T2 needs a trained model,
-# which is Week 3's option B). A padded session is scored from haystack-electrum's session log,
-# checked first against what the server itself received:
+# score one real session round by round. A padded session is scored from haystack-electrum's
+# session log, checked first against what the server itself received:
 python3 -m attack score --session  tests/fixtures/haystack-session.jsonl \
                          --honeypot tests/fixtures/haystack-honeypot-log.json --tier T1
 # a plain one from the honeypot's log and capture/'s record of what the wallet sent:
 python3 -m attack score --honeypot tests/fixtures/bdk-honeypot-log.json \
                          --capture  tests/fixtures/bdk-capture-truth.json --tier T1
+
+# the structural attacker (T2) on real sessions, trained on other wallets' sessions (Week 3,
+# option B). The training and scored sessions come from regtest/'s session generator:
+cargo run --release -p haystack-regtest --bin sessions -- --out regtest/sessions
+python3 -m attack score --session regtest/sessions/p10/demo.jsonl --train regtest/sessions/p10 --tier T2
+python3 -m attack curve --dir regtest/sessions     # bandwidth against score, every padding level
 ```
 
 ## What each file does
@@ -48,6 +53,8 @@ python3 -m attack score --honeypot tests/fixtures/bdk-honeypot-log.json \
 | `harness.py` | Ties the above to an adversary level. `TIERS` names what each level may use: `T0` one round, no model; `T1` all rounds, using persistence/cohorts/activation; `T2` adds the structural classifier. `knowledge()` grants the attacker the count of real scripthashes newly seen in each round — a fixed padding ratio discloses this anyway (see `docs/03-metric.md`, open question 3). |
 | `metrics.py` | Turns a `Posterior`/`Mixture` into a `Score`: `precision_bits` (the headline), `joint_bits`/`truth_bits` (calibration checks on the belief itself), `advantage` (secondary), and `candidates`, the count of scripthashes not yet ruled out. See the column table below. |
 | `synth.py` | Generates synthetic wallets and decoys with assumed statistics, for the calibration suite and `strategies`. `pad()` applies decoy strategies (`plain`, `fresh`, `epoch`, `fixed`, `append`) to a sequence of real rounds; `synthetic_wallet()` builds a wallet with a gap-limit tail and optional payments; `world()` and `growing()` are used by the calibration suite. Every number derived from this file describes the attack code under assumed statistics, not Haystack's real traffic. |
+| `train.py` | Option B. `fit()` builds a `StructuralModel` from labelled sessions of other wallets, after two safeguards: every training session must come from the same client build as the scored one (the session log's `client` record), and none may share a scripthash with it. Refusals raise `TrainingRefused`. The model is never saved. |
+| `curve.py` | `curve()` — the bandwidth-versus-score table. At each padding level it scores every wallet with a model fit on the others (leave one out), and joins the bytes from `bandwidth.json`. |
 | `calibrate.py` | `suite()` — the calibration table (13 configurations plus the analytic ceiling); `tripwire()` — the four pass/fail checks gating Week 1; `strategies()` — the decoy-strategy table of `docs/00-problem.md` §6; `run()`/`per_round()` — score one observation. |
 | `__main__.py` | `python3 -m attack {strategies,tripwire,calibrate,score}`. |
 
@@ -76,6 +83,7 @@ at the end of its output); reproduced here for anyone reading the code without r
 | `joint/R` | Entropy of the belief over which whole subset of `Q` is real, per real address — a calibration check, not a privacy number on its own (see `docs/03-metric.md` for why). |
 | `truth/R` | `-log2 P(the true R)` per real address — whether the belief is actually correct, not just confident. |
 | `adv` | `precision - chance` — kept as a secondary, easy-to-state number; can't tell a fully exposed wallet from a fully protected one on its own. |
+| `fund-b`, `fund%` | Precision restricted to the scripthashes with history, against the funded reals: what the headline hides when the unused tail dominates it. `--` when no real has history. |
 
 ## Adversary levels
 
@@ -83,7 +91,7 @@ at the end of its output); reproduced here for anyone reading the code without r
 |---|---|---|
 | `T0` | The latest round only, no model of what a real wallet looks like. | `attack/harness.py` |
 | `T1` | All rounds: which scripthashes persist, which vanish, which activate (`attack/a1.py`). This is the default, and the only level exercised against the real capture. | `attack/a1.py`, `attack/harness.py` |
-| `T2` | Everything `T1` has, plus a `StructuralModel` trained on labelled rounds (`attack/a2.py`). Needs `model=` passed explicitly. Training it on real Haystack sessions of paid regtest wallets is Week 3's option B (`docs/04-roadmap.md`). | `attack/a2.py` |
+| `T2` | Everything `T1` has, plus a `StructuralModel` trained on labelled rounds (`attack/a2.py`). Needs `model=` passed explicitly; `score --train` and `curve` fit it on real Haystack sessions of paid regtest wallets (`attack/train.py`). | `attack/a2.py` |
 | `T3` (on-chain / co-spend) | Not implemented. `attack()` raises `ValueError` if asked for it. | — |
 
 ## What this does and doesn't cover

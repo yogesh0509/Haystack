@@ -35,7 +35,7 @@ and see the exchange rate you're getting.
 | [docs/03-metric.md](docs/03-metric.md) | The deanonymisation score — definition, calibration, what it does not capture |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Four-week plan, week-1 tripwire, cut lines |
 | [docs/05-prior-art.md](docs/05-prior-art.md) | What already exists and how to position honestly against it |
-| [docs/06-decision-log.md](docs/06-decision-log.md) | Why this project, and the alternatives considered and dropped |
+| [docs/07-walkthrough.md](docs/07-walkthrough.md) | Testing every case, step by step: the leak, new and restored wallets, chain decoys, restarts, the bandwidth curve |
 | [scripts/](scripts/) | Runnable demonstrations of the problem — see below |
 
 ## Verify the problem in five minutes
@@ -57,7 +57,8 @@ python3 scripts/honeypot_electrum.py
 python3 -m attack strategies
 ```
 
-Full walkthrough with expected output in [docs/00-problem.md](docs/00-problem.md).
+Full walkthrough with expected output in [docs/00-problem.md](docs/00-problem.md). To test every
+case Haystack handles, new and paid wallets included, follow [docs/07-walkthrough.md](docs/07-walkthrough.md).
 
 ## Two results worth knowing up front
 

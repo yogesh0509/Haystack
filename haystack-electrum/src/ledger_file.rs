@@ -12,7 +12,11 @@
 //! ```
 //!
 //! A range covers positions `from` to `to`, both included, frozen with `decoys` decoys each. Each
-//! keychain's ranges run from position 0 with no gaps or overlaps. Saving writes a temporary file,
+//! keychain's ranges run from position 0 with no gaps or overlaps.
+//!
+//! A ledger holding chain-sourced decoys is written as `haystack-ledger/2`, which adds their scripts,
+//! since they can't be rebuilt from the key: `"chain":{"external":[{"i":3,"j":0,"script":"0014…"}]}`.
+//! A ledger without any is still written as `haystack-ledger/1`, and both are read. Saving writes a temporary file,
 //! flushes it to disk, and renames it over the old one, so a crash leaves either the old ledger or
 //! the new one, never a truncated one.
 
@@ -30,6 +34,7 @@ use crate::keychain::Keychain;
 use crate::ledger::{KeyMismatch, Ledger};
 
 const FORMAT: &str = "haystack-ledger/1";
+const FORMAT_CHAIN: &str = "haystack-ledger/2";
 const KEYCHAINS: [Keychain; 2] = [Keychain::External, Keychain::Internal];
 
 #[derive(Debug)]
@@ -90,21 +95,33 @@ pub fn export(ledger: &Ledger) -> String {
             keychains.insert(label(kc).into(), Value::Array(ranges));
         }
     }
-    json!({
-        "format": FORMAT,
+    let mut chain = Map::new();
+    for ((kc, index), j, script) in ledger.all_chain_decoys() {
+        chain
+            .entry(label(kc))
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .expect("created as an array")
+            .push(json!({ "i": index, "j": j, "script": script.as_bytes().to_lower_hex_string() }));
+    }
+    let mut doc = json!({
+        "format": if chain.is_empty() { FORMAT } else { FORMAT_CHAIN },
         "key_fingerprint": ledger.key_fingerprint().to_lower_hex_string(),
         "keychains": keychains,
-    })
-    .to_string()
+    });
+    if !chain.is_empty() {
+        doc["chain"] = Value::Object(chain);
+    }
+    doc.to_string()
 }
 
 /// Rebuild a ledger from `export`'s output, refusing one made with a different key or one whose
 /// ranges leave a gap, overlap, or start anywhere but position 0.
 pub fn import(text: &str, key: &DecoyKey) -> Result<Ledger, LedgerFileError> {
     let doc: Value = serde_json::from_str(text).map_err(|e| bad(format!("not JSON: {e}")))?;
-    if doc["format"] != FORMAT {
+    if doc["format"] != FORMAT && doc["format"] != FORMAT_CHAIN {
         return Err(bad(format!(
-            "format is {}, expected {FORMAT}",
+            "format is {}, expected {FORMAT} or {FORMAT_CHAIN}",
             doc["format"]
         )));
     }
@@ -160,6 +177,37 @@ pub fn import(text: &str, key: &DecoyKey) -> Result<Ledger, LedgerFileError> {
                 .ok_or_else(|| bad("range runs past the last index"))?;
         }
     }
+    if let Some(chain) = doc.get("chain") {
+        let chain = chain
+            .as_object()
+            .ok_or_else(|| bad("chain is not an object"))?;
+        for (name, entries) in chain {
+            let kc = KEYCHAINS
+                .into_iter()
+                .find(|kc| label(*kc) == name.as_str())
+                .ok_or_else(|| bad(format!("unknown keychain {name} in chain")))?;
+            for e in entries
+                .as_array()
+                .ok_or_else(|| bad(format!("chain {name} is not a list")))?
+            {
+                let num = |f: &str| {
+                    e[f].as_u64()
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(|| bad(format!("chain {name} entry has no valid {f}")))
+                };
+                let (index, j) = (num("i")?, num("j")?);
+                let script = e["script"]
+                    .as_str()
+                    .and_then(|h| Vec::<u8>::from_hex(h).ok())
+                    .ok_or_else(|| bad(format!("chain {name} entry has no valid script")))?;
+                if !ledger.set_chain_decoy((kc, index), j, script.into()) {
+                    return Err(bad(format!(
+                        "chain decoy {name}/{index}/{j} is outside the frozen positions or repeated"
+                    )));
+                }
+            }
+        }
+    }
     Ok(ledger)
 }
 
@@ -188,17 +236,23 @@ impl LedgerFile {
     }
 
     pub fn save(&self, ledger: &Ledger) -> Result<(), LedgerFileError> {
-        let tmp = self.path.with_extension("tmp");
-        {
-            let mut file = File::create(&tmp)?;
-            file.write_all(export(ledger).as_bytes())?;
-            file.write_all(b"\n")?;
-            file.sync_all()?;
-        }
-        fs::rename(&tmp, &self.path)?;
-        sync_dir(&self.path)?;
+        write_atomically(&self.path, export(ledger).as_bytes())?;
         Ok(())
     }
+}
+
+/// Write a temporary file, flush it to disk, and rename it over `path`, so a crash leaves either
+/// the old contents or the new ones, never a truncated file.
+pub(crate) fn write_atomically(path: &Path, body: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = File::create(&tmp)?;
+        file.write_all(body)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)?;
+    sync_dir(path)
 }
 
 /// Make the rename itself durable: until the directory entry is on disk, a crash can bring back
@@ -220,6 +274,8 @@ impl LedgerStore for LedgerFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bdk_core::bitcoin::ScriptBuf;
+    use std::collections::BTreeMap;
 
     fn key() -> DecoyKey {
         DecoyKey::for_tests(b"test-wallet")
@@ -297,9 +353,32 @@ mod tests {
     }
 
     #[test]
+    fn chain_decoys_round_trip_as_version_2() {
+        let mut l = ledger(&[(Keychain::External, 0, 4, 9), (Keychain::Internal, 0, 1, 9)]);
+        let a = ScriptBuf::from_bytes(vec![0x00, 0x14, 0xaa]);
+        let b = ScriptBuf::from_bytes(vec![0x00, 0x14, 0xbb]);
+        assert!(l.set_chain_decoy((Keychain::External, 3), 0, a.clone()));
+        assert!(l.set_chain_decoy((Keychain::Internal, 1), 8, b.clone()));
+        let text = export(&l);
+        assert!(text.contains(FORMAT_CHAIN));
+        let back = import(&text, &key()).unwrap();
+        assert_eq!(entries(&back), entries(&l));
+        assert_eq!(back.chain_decoys((Keychain::External, 3)), BTreeMap::from([(0, a)]));
+        assert_eq!(back.chain_decoys((Keychain::Internal, 1)), BTreeMap::from([(8, b)]));
+    }
+
+    #[test]
+    fn refuses_a_chain_decoy_outside_the_frozen_positions() {
+        let mut l = ledger(&[(Keychain::External, 0, 4, 9)]);
+        l.set_chain_decoy((Keychain::External, 1), 2, ScriptBuf::from_bytes(vec![0x00]));
+        let text = export(&l).replace("\"i\":1", "\"i\":7");
+        assert!(matches!(import(&text, &key()), Err(LedgerFileError::Format(_))));
+    }
+
+    #[test]
     fn refuses_another_format_or_keychain() {
         let text = export(&ledger(&[(Keychain::External, 0, 4, 9)]));
-        let other_format = text.replace(FORMAT, "haystack-ledger/2");
+        let other_format = text.replace(FORMAT, "haystack-ledger/9");
         assert!(matches!(
             import(&other_format, &key()),
             Err(LedgerFileError::Format(_))

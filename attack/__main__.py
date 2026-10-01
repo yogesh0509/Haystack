@@ -1,9 +1,11 @@
-"""python3 -m attack {strategies,tripwire,calibrate,score}"""
+"""python3 -m attack {strategies,tripwire,calibrate,score,curve}"""
 import argparse
 import sys
 
 from .calibrate import per_round, rounds_table, strategies, suite, tripwire
+from .curve import curve
 from .harness import TIERS
+from .train import TrainingRefused, fit, session_paths
 from .observe import check_plain, check_session, load_capture, load_honeypot, load_session
 
 
@@ -34,7 +36,11 @@ def main(argv=None):
     s.add_argument("--session", help="haystack-session/1 log from haystack-electrum")
     s.add_argument("--honeypot", help="the server's log; with --session, checked against it first")
     s.add_argument("--capture", help="ground truth from capture/, when scoring a honeypot log alone")
-    s.add_argument("--tier", choices=sorted(set(TIERS) - {"T2"}), default="T1")
+    s.add_argument("--tier", choices=sorted(TIERS), default="T1")
+    s.add_argument("--train", nargs="+", help="labelled sessions of other wallets (files or directories); needed for T2")
+
+    v = sub.add_parser("curve", help="bandwidth against score, from regtest's session generator")
+    v.add_argument("--dir", required=True, help="output of `cargo run -p haystack-regtest --bin sessions`")
 
     args = ap.parse_args(argv)
     if args.cmd == "strategies":
@@ -49,6 +55,23 @@ def main(argv=None):
         obs = load_honeypot(args.honeypot) if args.honeypot else None
         print(suite(truth, obs, args.padding, args.seeds))
         return 0
+    if args.cmd == "curve":
+        try:
+            print(curve(args.dir))
+        except TrainingRefused as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        return 0
+    model = None
+    if args.tier == "T2":
+        if not (args.session and args.train):
+            ap.error("T2 needs --session and --train")
+        try:
+            model, n_train = fit(args.session, session_paths(args.train))
+        except TrainingRefused as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        print(f"structural model fit on {n_train} training sessions")
     if args.session:
         obs, truth = load_session(args.session)
         if args.honeypot:
@@ -71,7 +94,7 @@ def main(argv=None):
                   file=sys.stderr)
             return 1
     print(rounds_table(f"{source}, tier {args.tier}",
-                       per_round(obs.upto(n - 1), [truth.real(t) for t in range(n)], args.tier)))
+                       per_round(obs.upto(n - 1), [truth.real(t) for t in range(n)], args.tier, model=model)))
     return 0
 
 

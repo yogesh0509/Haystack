@@ -236,8 +236,7 @@ nobody re-adds them without rediscovering the problem.
   attack, precision among `S` equally likely survivors is `|R| / S`, so precision in bits is
   `log2(S / |R|)`: the same number (checked on `python3 -m attack strategies`'s setting, equal to
   within 1.6×10⁻¹⁶). When the evidence is uneven, the proxy ignores it: with the structural attack on
-  careless chain decoys it still read the full 3.32 bits while precision was 79.85%. Removed
-  2026-09-29.
+  careless chain decoys it still read the full 3.32 bits while precision was 79.85%. Removed.
 
 ### Reporting
 
@@ -249,6 +248,14 @@ between them is a warning that the attack model is overconfident, as the case ab
 advantage is kept as a secondary column, for the reason it used to be considered as the headline:
 restating a specific gain as "twice as good as guessing" needs no logarithm.
 
+**Precision among funded addresses.** This is the same precision, restricted to
+the scripthashes the server reports history for. The attacker takes its top `|F|` guesses among
+them, where `F` is the funded reals, and the chance rate is `|F|` divided by the number with history.
+It exists because the headline averages over every real address, and the unused tail dominates.
+
+**How results are presented.** Precision in bits stays the headline, and
+precision among funded addresses is always printed beside it.
+
 None of this is combined into one number. Averaging or weighting these together would mean choosing
 weights, and that choice is itself a place a result could end up looking better than it is. Keeping
 them separate means each checks the others: precision moving while the calibration check doesn't (or
@@ -256,7 +263,7 @@ the reverse) is itself a signal worth noticing.
 
 ---
 
-## Open questions — resolved 2026-09-26
+## Open questions — resolved
 
 The four questions below shaped the metric's definition. All four are closed; kept here as the record
 of what was open and why, in the style of `docs/02-design.md`'s resolved sync-integration questions.
@@ -276,7 +283,7 @@ of what was open and why, in the style of `docs/02-design.md`'s resolved sync-in
    check," above. It stays, but only as a check next to truth bits, not as a privacy number by itself.
 3. **Does the adversary know `|R|`?** Yes, and not only as a scoring convenience. `docs/01-threat-model.md`
    already grants the adversary the wallet software's behaviour, including the gap limit; every sync
-   being a full scan (`docs/02-design.md`, "haystack-electrum," resolved 2026-09-25) means a never-paid
+   being a full scan (`docs/02-design.md`, "haystack-electrum") means a never-paid
    wallet's real count is fixed by the gap limit alone, and the capture fixture confirms it: all 6 real
    rounds hold exactly 100 scripthashes. `attack/harness.py`'s `knowledge()` grants the attacker the
    real count per first-seen cohort, consistent with this.

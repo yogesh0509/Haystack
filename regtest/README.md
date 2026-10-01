@@ -43,7 +43,7 @@ spends.
 | 2 | External 0 is paid again (0.1) | address reuse |
 | 3 | One payout pays external 2 (0.3) and external 5 (0.05); two blocks | a transaction touching two of the wallet's addresses; 3 and 4 handed out, never paid |
 | 4 | External 30 is paid (0.01) | a used address deep in the range: the scan must reach external 80 |
-| 5 | The wallet spends 0.6, more than any one coin it holds; confirmed | two inputs spent together, change to internal 0 |
+| 5 | The wallet spends 0.6, more than any one coin it holds; confirmed | at least two inputs spent together (coin selection is random; one run used four), change to internal 0 |
 | 6 | The wallet spends 0.05; left unconfirmed | an unconfirmed outgoing transaction, change to internal 1 |
 | 7 | Someone pays external 6 (0.02); left unconfirmed | an unconfirmed incoming payment |
 
@@ -70,3 +70,33 @@ and none for any decoy.
 
 This is the only test of confirmed transactions. Making Haystack drop every confirmation anchor
 leaves all 43 in-memory tests passing, and fails this one at round 1.
+
+## Training sessions and the bandwidth curve (`src/bin/sessions.rs`)
+
+Week 3's structural attacker learns from labelled sessions of other wallets (`docs/04-roadmap.md`,
+option B). This binary builds them on one fresh regtest chain:
+
+```bash
+cargo run --release -p haystack-regtest --bin sessions -- --out regtest/sessions   # about 15 minutes
+python3 -m attack curve --dir regtest/sessions
+```
+
+- **The scored wallet** is the demo wallet above.
+- **The 12 training wallets** (`--wallets`) get random histories: receives, address reuse, unpaid
+  gaps, spends with change, and sometimes an unconfirmed last transaction. The tables in
+  `src/population.rs` say how often each happens. **They are assumptions, not measurements.** No
+  verified source for personal-wallet histories has been found yet, and each run copies them into
+  `manifest.json`.
+- **Every wallet** is synced through `HaystackElectrumClient` at each `--paddings` level (default 1,
+  2, 5, 10, 20) and each `--chain-shares` level (default 0, 0.1, 0.3), twice, with a payment to
+  its next unused receive address between the two rounds. Sessions land in
+  `p<padding>-c<percent>/`. Chain decoys are found through the same electrs
+  (`haystack_electrum::chain`), so they are the other wallets' and the node's addresses. This small
+  chain runs out of candidates above about 200 chain decoys.
+- **A relay counts every byte** between the client and electrs (`src/proxy.rs`), giving
+  `bandwidth.json`. It counts application bytes only: no TCP/IP headers, and no TLS, which regtest
+  doesn't use.
+
+The binary deletes `--out` before writing. That makes it the training set's reset: one run replaces
+every session with ones from the client as currently built, and each session line records that
+client's version and source hash. The output is about 170 MB and is not committed (`.gitignore`).

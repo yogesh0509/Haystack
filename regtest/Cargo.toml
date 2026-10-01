@@ -12,3 +12,4 @@ bdk_electrum = "0.23.2"
 electrum-client = { version = "0.24.1", default-features = false, features = ["proxy", "use-rustls"] }
 haystack-electrum = { path = "../haystack-electrum" }
 serde_json = "1"
+rand = "0.8"

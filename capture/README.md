@@ -37,7 +37,7 @@ sent, not a copy of what any server saw. Output is one JSON file:
 reads a padded run as the ground truth for a padded honeypot log, unchanged: anything the server
 logged that isn't in `queried` is a decoy. `decoys` lists the scripthashes the ledger says were sent
 alongside them (empty at padding 1), so a honeypot log can be checked against the ledger exactly.
-`padding` and `decoys` were added on 2026-09-29; the committed plain fixture predates them, and
+`padding` and `decoys` were added later; the committed plain fixture predates them, and
 `load_capture()` ignores both.
 
 Each round's `scripthash` is computed the same way `scripts/scripthash.py` computes it (SHA-256 of

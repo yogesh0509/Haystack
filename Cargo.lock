@@ -576,6 +576,7 @@ dependencies = [
  "bdk_core",
  "bdk_electrum",
  "bdk_wallet",
+ "bitcoin_hashes",
  "electrum-client 0.24.1",
  "rand",
  "serde_json",
@@ -590,6 +591,7 @@ dependencies = [
  "bdk_wallet",
  "electrum-client 0.24.1",
  "haystack-electrum",
+ "rand",
  "serde_json",
 ]
 

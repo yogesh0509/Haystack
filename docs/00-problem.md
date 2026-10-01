@@ -1,7 +1,7 @@
 # The problem
 
-Every claim below has a command next to it. Run them. The outputs in §1 and §2 were captured on
-2026-09-08 against live infrastructure. The outputs in §4 and §6 were regenerated on 2026-09-29
+Every claim below has a command next to it. Run them. The outputs in §1 and §2 were captured
+against live infrastructure. The outputs in §4 and §6 were regenerated
 with this repo's own tools: `capture/`, which runs real scans with the published `bdk_wallet` 2.1.0
 the project builds against, and `python3 -m attack strategies`, the project's own attacker.
 

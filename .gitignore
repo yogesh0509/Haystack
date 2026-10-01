@@ -31,6 +31,8 @@ honeypot-log.json
 capture-truth.json
 *.sqlite
 bdk-example-*.sqlite
+regtest/sessions/
+out/
 
 # Self Documentation
 /docs/04-roadmap.md

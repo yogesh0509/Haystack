@@ -25,6 +25,9 @@ use haystack_electrum::key::DecoyKey;
 
 pub use bdk_testenv::TestEnv;
 
+pub mod population;
+pub mod proxy;
+
 pub type Error = Box<dyn std::error::Error>;
 
 pub const DEMO_SEED: &str = "haystack-regtest-demo";
@@ -114,7 +117,7 @@ pub fn sync_plain(env: &TestEnv, wallet: &mut Wallet) -> Result<(), Error> {
 
 /// Someone else pays `address`; waits until electrs has indexed the payment.
 pub fn pay(env: &TestEnv, address: &Address, btc: f64) -> Result<Txid, Error> {
-    let txid = env.send(address, Amount::from_btc(btc)?)?;
+    let txid = env.send(address, sats(btc))?;
     wait_for_history(env, &address.script_pubkey(), txid)?;
     Ok(txid)
 }
@@ -123,8 +126,9 @@ pub fn external(wallet: &Wallet, index: u32) -> Address {
     wallet.peek_address(KeychainKind::External, index).address
 }
 
-/// The wallet pays someone else `btc`, choosing its own coins and change, and signs it.
-fn spend(env: &TestEnv, wallet: &mut Wallet, btc: f64) -> Result<(Txid, u32), Error> {
+/// The wallet pays someone else `btc`, choosing its own coins and change, and signs it. Returns
+/// the transaction and how many inputs it spent.
+pub fn spend(env: &TestEnv, wallet: &mut Wallet, btc: f64) -> Result<(Txid, u32), Error> {
     let to = env
         .bitcoind
         .client
@@ -132,7 +136,7 @@ fn spend(env: &TestEnv, wallet: &mut Wallet, btc: f64) -> Result<(Txid, u32), Er
         .assume_checked();
     let mut builder = wallet.build_tx();
     builder
-        .add_recipient(to.script_pubkey(), Amount::from_btc(btc)?)
+        .add_recipient(to.script_pubkey(), sats(btc))
         .fee_rate(FeeRate::from_sat_per_vb(2).expect("valid rate"));
     let mut psbt = builder.finish()?;
     if !wallet.sign(&mut psbt, SignOptions::default())? {
@@ -150,6 +154,17 @@ fn spend(env: &TestEnv, wallet: &mut Wallet, btc: f64) -> Result<(Txid, u32), Er
     let txid = env.bitcoind.client.send_raw_transaction(&tx)?;
     wait_for_history(env, &change, txid)?;
     Ok((txid, inputs))
+}
+
+/// A never-synced BIP84 wallet from a public seed string, with no history yet.
+pub fn new_wallet(seed: &str) -> Result<RealWallet, Error> {
+    let (external, internal, account) = descriptors(seed)?;
+    Ok(RealWallet {
+        external,
+        internal,
+        account,
+        story: Vec::new(),
+    })
 }
 
 /// BIP84 descriptors with private keys, from a public seed string. Regtest only: anyone can
@@ -233,4 +248,9 @@ pub fn build_history(env: &TestEnv, seed: &str) -> Result<RealWallet, Error> {
     story.push("received 0.02 at external 6; left unconfirmed".into());
 
     Ok(RealWallet { story, ..rw })
+}
+
+/// `btc` rounded to whole satoshis; `Amount::from_btc` refuses anything more precise.
+fn sats(btc: f64) -> Amount {
+    Amount::from_sat((btc * 1e8).round() as u64)
 }

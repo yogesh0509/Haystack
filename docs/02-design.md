@@ -61,7 +61,7 @@ round since it first appeared. It leaves "watched" exactly two ways, and both ex
 - Deterministic, so repeated queries are byte-identical and intersection yields nothing. Concretely,
   decoy `j` of a given position (a keychain and an index) is `HMAC-SHA256(key, keychain ‖ index ‖ j)`
   — a keyed hash, so the same key always reproduces the same decoys.
-- Derived from the wallet's own public keys rather than the system RNG. Resolved 2026-09-28: the key
+- Derived from the wallet's own public keys rather than the system RNG. The key
   is a tagged SHA-256 (tag `haystack/decoy-key/v1`) of the wallet's account xpubs, each in its 78-byte
   BIP32 encoding, sorted and deduplicated (`haystack-electrum/src/key.rs`). Every device watching the
   wallet, and every reinstall, arrives at the same key without being told it, and two wallets with
@@ -111,17 +111,21 @@ averaged over 5 seeds at padding 10, where random guessing reads ~10%. Rows are 
 assumed feature distributions from `attack/synth.py`, so they test the attack rather than Haystack;
 the ordering is the real result:
 
-**Mitigation status (partly resolved, 2026-09-29).** For positions with no history when first
-queried, HMAC-direct decoys ("Where decoys come from" below) already match reals on every property
-the server observes: script type, zero history, and order. So that case, which covers the demo
-wallet, is closed by argument, with the real-session measurement due in Week 3. It stays open for
-positions that have history when first queried, such as a restored wallet. There, HMAC decoys
-stand out the way random-scripthash decoys do in `python3 -m attack calibrate` (29.59% precision
-against ~10% chance, because used reals have history and no decoy does). That needs chain-sourced
-decoys whose history and script type are drawn from the population of real wallets, because the
-client can't know this wallet's history before its first query. Derivation structure is not observable to the server.
-Coherence only matters through what the server does observe: history counts, script types, and
-on-chain links between decoys.
+**Mitigation status (measured on real sessions).** For positions with no history when
+first queried, HMAC-direct decoys ("Where decoys come from" below) match reals on every property the
+server observes: script type, zero history, and order. That covers a new wallet, including the demo
+wallet. It stays open for positions that have history when first queried, such as a restored wallet.
+There, HMAC decoys stand out, because used reals have history and no decoy does. Chain-sourced decoys
+fix that against the structural attack, but they are found through the sync server, which can name
+every one of them from its own log (see "Where the chain-sourced pool comes from" below). The
+client can match script type up front, because the descriptor states it. History is the part it
+can't know before its first query. Derivation structure is not observable to the server. Coherence
+only matters through what the server does observe: history counts, script types, and on-chain links
+between decoys.
+
+The structural attack now runs on real sessions (option B, `python3 -m attack curve`). It is trained
+on 12 other paid wallets on the regtest chain. Each of the 13 wallets is scored in turn by a model
+fit on the other 12.
 
 This is the hardest unsolved part of the design and where the most time should go.
 
@@ -136,7 +140,7 @@ This is the hardest unsolved part of the design and where the most time should g
   synthetic, `python3 -m attack calibrate`).
 - Repeated syncs at a fixed cadence identify the wallet across IP changes.
 
-**Mitigation status (2026-09-29).** Order and batching are resolved and built: each stage's reals
+**Mitigation status.** Order and batching are resolved and built: each stage's reals
 and decoys are shuffled together and cut into batches of `5 × padding`
 (`haystack-electrum/src/client.rs`), and a test requires two scans to place the reals differently.
 Timing is decided and implemented as `haystack-electrum/src/schedule.rs`, detailed in "Sync
@@ -163,11 +167,16 @@ two sources, one for each case.
   that is `OP_0` followed by the first 20 HMAC bytes. The key is the decoy key from the A1
   mitigation above. The real address has zero history and so does every decoy, so the server has
   nothing to separate them on. There is no pool to fetch, version or subtract.
-- **Positions with history when first queried will use chain-sourced decoys. Planned for Week 3.**
+- **Chain-sourced decoys, for positions that may have history when first queried. Built, off by default** (`haystack-electrum/src/chain.rs`, `HaystackElectrumClient::with_chain_decoys`).
   The main example is a restored or imported wallet. These decoys are real addresses taken from past
-  blocks, so they have real history. Their history counts and script types must be drawn from the
-  population of real wallets, not matched to this wallet. The client learns this wallet's history
-  only from the server's answers, which come after the first padded query has already gone out.
+  blocks, so they have real history. The client learns this wallet's history only from the server's
+  answers, which come after the first padded query has already gone out. So it can't match decoys to
+  the wallet's own funded positions. Instead a fixed share of every new position's decoys comes from
+  the chain, rounded per position by a keyed draw. Script type is matched to the wallet's, because the
+  descriptor states it before the first query. History can't be matched; it is whatever the candidate
+  has, within 1 to 20 transactions. Each chosen script is stored in the ledger
+  (`haystack-ledger/2`), because asking the chain again could pick a different address. Where the
+  candidates come from, and why that leaks, is under "Yet to be built or decided".
 - **Chain-sourced decoys will be grouped the way real wallets appear on chain. Planned for Week 3.**
   The server can't see derivation indices, so a group only needs to look coherent through what the
   server can see: history counts, script types and on-chain links. An example is taking the inputs of
@@ -200,27 +209,39 @@ two sources, one for each case.
   hash-derived pick at once, which is a mass withdrawal (A1 mitigation above).
 - **Never check a candidate on the sync server before using it.** A candidate that is queried once
   and then rejected vanishes, which is exactly the withdrawal signal the intersection attack reads.
+  *Broken on purpose by the chain-decoy build; see below.*
 - **Never fetch pool material from the sync server.** If the client fetches transaction T and later
   queries a scripthash from T's outputs, the server can link the two and mark that scripthash as a
-  decoy.
+  decoy. *Broken on purpose by the chain-decoy build; see below.*
 - **No source covers a position that gains history while Haystack watches it.** That is the
   activation attack under A1, accepted as a limitation. HMAC-direct doesn't make it worse, and no
   decoy source fixes it without decoys that are paid on the wallet's own schedule.
 
 ### Yet to be built or decided
 
-- **Where the chain-sourced pool comes from (not decided).** The source must not be the sync server,
-  for the two reasons above. The leading option is to download whole blocks from a different source
-  over Tor, such as a Bitcoin P2P peer or an Esplora endpoint, choosing the heights with the decoy
-  key so the pool is per-wallet. That source then learns only which blocks were downloaded. For Week
-  3 measurements, `regtest/`'s `bitcoind` can stand in for it. This is open question 1 below.
-- **The population distributions that chain-sourced decoys are drawn from.** Per-address history
-  counts and the script-type mix can be measured on chain. Wallet-level shape, such as addresses used
-  per wallet, gaps and reuse, can't be seen on chain without clustering, so it stays a named
-  assumption.
-- **The structural attack on real sessions.** Week 3 trains it on labelled regtest sessions and scores
-  both sources with it. Until then, the HMAC-direct result above is backed by argument and a
-  synthetic calibration, not by a measurement of the real client.
+- **Where the chain-sourced pool comes from (decided: the sync server, knowingly).**
+  For the hackathon, chain decoys are found through the same server the wallet syncs with, so no
+  second server is needed. This breaks the two rules above. The attack that exploits it is described
+  here and deliberately not built. The harness ignores the lookups, so every chain-decoy score in this
+  repo is what an attacker gets *if it never reads its own log*. A second, independent server is a
+  post-hackathon task, after all four weeks' items are done and tested. This is open question 1 below.
+
+  *The attack, not built.* The server lists every scripthash whose history it was asked for before
+  the round in which that scripthash was first queried, and crosses those off. All the chain decoys
+  are on that list, plus the candidates that were rejected. No real address is on it, because the
+  client never looks up its own. A new connection doesn't help: the overlap between "outputs of
+  transactions fetched from nowhere" and "addresses later queried" matches two sessions by content
+  alone. After crossing them off, the scripthashes with history that are left are exactly the funded
+  reals.
+
+  *What regtest can and can't show.* On regtest, the candidates are other regtest wallets' addresses
+  and the node's own. Their histories come from the same assumed tables as the real wallets
+  (`regtest/src/population.rs`), so the structural attack can't tell them apart on history by
+  construction. Chain-decoy rows measured there are optimistic for that reason too. On mainnet the
+  candidates would follow the chain's real mix, exchanges included.
+
+- **The structural attack on real sessions. Built** (`attack/train.py`, `attack/curve.py`,
+  `regtest/src/bin/sessions.rs`); the results are under A2 above.
 - **Mempool-sourced addresses only as the Week 3 fallback.** If chain-sourced groups don't converge,
   the roadmap's cut line ships mempool-plus-historical decoys and reports the structural score as it
   is. A mempool sample skews toward exactly-one-recent-transaction and mixed script types. The
@@ -249,7 +270,7 @@ built, so padding has to live inside the box.
   `batch_script_get_history` call, and the answers are matched back to the tags in request order;
   diagram 4 explains why that order holds. Only real answers feed the stop-gap, transaction and anchor
   bookkeeping copied from upstream. Decoy answers take a separate path.
-- **Every sync is a full scan. Resolved 2026-09-25.** The reason is the first rule below. So the crate
+- **Every sync is a full scan.** The reason is the first rule below. So the crate
   has no `sync` method at all, and an app that calls one fails to compile instead of silently sending
   an unpadded query (`docs/04-roadmap.md`, "Public API").
 
@@ -283,9 +304,9 @@ built, so padding has to live inside the box.
   (`~/bdk_wallet/examples/electrum.rs:52`), which are real ones only. After a restart the client would
   then re-fetch every decoy transaction and no real one. For example, if 8 reals and 90 decoys have
   history, the server sees re-fetches for the 90 and none for the 8, which are exactly the used
-  reals. Within one run, `haystack-electrum` already uses one cache for both (`fetch_txs`). Its
-  `populate_tx_cache` is copied from upstream, so an app that fills it from the wallet's transactions
-  recreates this leak.
+  reals. `haystack-electrum` uses one cache for both (`fetch_txs`), and it now has no
+  `populate_tx_cache`. An app copied from bdk's example fails to compile instead of recreating this
+  leak. Across restarts the cache is saved, below.
 - **Every fetched transaction's id is checked.** A transaction whose computed txid differs from the
   one requested is rejected, so a hostile server can't answer one request with a different
   transaction. Published 0.23.2 doesn't check this. The check was ported by hand from bdk's unreleased
@@ -293,10 +314,16 @@ built, so padding has to live inside the box.
 
 ### Yet to be built
 
-- **A saved cache shared by reals and decoys.** Today's caches live in memory and are lost on
-  restart. That is harmless while HMAC-direct decoys never have history, because there are no decoy
-  transactions to re-fetch. It has to exist before Week 3's chain-sourced decoys, which do have
-  history. Diagram 1 draws it as decided but not built.
+- **A saved cache shared by reals and decoys. Built** (`haystack-electrum/src/cache_file.rs`,
+  format `haystack-cache/1`). The client saves every transaction and merkle proof it fetched after
+  each scan, finished or not, once the session log is written (`with_cache_store`). A restarted
+  client loads them back (`with_saved_cache`). The cache is filled only by the client's own fetches,
+  so it holds reals and decoys in the same way. A test restarts with it and requires zero
+  transaction fetches, and restarts without it and requires reals and decoys to be refetched
+  together. Block headers are not saved. They are cached by height, so after a reorganisation a
+  saved header would send a proof lookup to a block no longer on the chain. Proofs are saved under
+  their block's hash, so a replaced block misses the cache and is proven again. The regtest gate
+  carries the cache through its one-block reorganisation and still matches upstream exactly.
 - **bdk's own full-scan-then-sync pattern, as a stretch goal only** (`docs/04-roadmap.md`). A tail
   position and its decoys would leave together at each sync and return at the next full scan, saving
   the tail's bandwidth on syncs. The harness has to change first, because its "missing means decoy"
@@ -309,7 +336,7 @@ built, so padding has to live inside the box.
 
 ### Which upstream version to copy
 
-- **The crate targets `bdk_wallet` 2.1.0 from crates.io. Resolved 2026-09-26.** It uses the same set
+- **The crate targets `bdk_wallet` 2.1.0 from crates.io.** It uses the same set
   `capture/Cargo.lock` resolves: `bdk_electrum` 0.23.2, `bdk_chain` 0.23.3, `bdk_core` 0.6.3 and
   `electrum-client` 0.24.1. That toolchain produced the fixtures in `tests/fixtures/`. The local
   `~/bdk_wallet` is a personal fork at 3.1.0 that exists only in that checkout. It is read, never
@@ -322,7 +349,7 @@ built, so padding has to live inside the box.
 
 ## The system in diagrams
 
-Added 2026-09-24, based on the sibling-crate decision in "haystack-electrum" above. Four diagrams
+Based on the sibling-crate decision in "haystack-electrum" above. Four diagrams
 draw the product Haystack will be built as -
 
 1. The whole system on one page: every part, and which way data moves between them.
@@ -374,9 +401,9 @@ The diagrams mix parts that exist with parts that don't. Diagram 1 shows each pa
 style of its border:
 
 - A solid border means the part exists in this repo today. That covers `capture/`, the honeypot, the
-  attack harness, and `haystack-electrum`'s client, decoy selector, ledger and session log. Updated
-  2026-09-29: those four are now built, so they are solid; the shared cache was agreed after this
-  diagram was drawn, so it is dashed rather than dotted.
+  attack harness, and `haystack-electrum`'s client, decoy selector, ledger and session log. Updated:
+  those four are now built, so they are solid. The shared cache was agreed after this
+  diagram was drawn, and is now built, so it is solid too.
 - A dashed border means an earlier section of these docs decided to build it, and no code exists
   yet.
 - A dotted border means this section proposes it for the first time. Each proposal says why it is
@@ -422,7 +449,7 @@ flowchart LR
 
     classDef decided stroke-dasharray: 8 4
     classDef proposed stroke-dasharray: 2 3
-    class ui,pool,cache decided
+    class ui,pool decided
 ```
 
 This picture answers where each part of Haystack runs, which parts the user has to trust, and which
@@ -446,7 +473,7 @@ The server is the only part on the far side of the trust boundary. It receives e
 `Q` and answers all of them. The design assumes it answers honestly. A lying server is out of scope
 (`docs/01-threat-model.md`), because it can already show any client a false balance.
 
-The measurement path exists today in three forms (updated 2026-09-29). For plain syncs,
+The measurement path exists today in three forms (updated). For plain syncs,
 `capture/` runs real `bdk_wallet` full scans against the honeypot and records what the wallet itself
 sent, which is the ground truth; `scripts/honeypot_electrum.py` records what arrived at the server,
 which is the adversary's view; and `python3 -m attack tripwire` checks the two against each other,
@@ -460,7 +487,7 @@ identical. `capture/README.md` and `attack/README.md` have the exact commands an
 current numbers — this stays here only as a pointer, so the five-step product path above has
 something real to contrast against.
 
-The session log exists (built 2026-09-29, `haystack-electrum/src/session.rs`) because the honeypot
+The session log exists (built, `haystack-electrum/src/session.rs`) because the honeypot
 can't measure real decoys. The honeypot answers
 "nothing found" to every query. Decoys drawn from the chain have real history, and the structural
 attack needs the server's view of that history: each scripthash's transaction count and script type
@@ -579,7 +606,8 @@ the dial saves no bandwidth for them. The confirm step tells the user both facts
   payment, which is the timing attack (A3 above). The private default is a timer with a
   memoryless random delay, resolved in "Sync scheduling" below. Manual sync stays
   available, and the screen says what its timing reveals.
-- **Sync failed.** Public servers already refuse oversized requests (`docs/04-roadmap.md`, "Risks").
+- **Sync failed.** A public server may refuse an oversized request. None has yet: in Week 2,
+  electrum.blockstream.info answered all 1,000 scripts in one write (`docs/04-roadmap.md`, Week 2).
   A retry sends the same positions with the same decoys, so it reveals nothing new.
 - **Plain versus padded demo.** The roadmap's side-by-side demo sends the unpadded query, which is
   the leak itself. So it runs only on the demo wallet against the local honeypot, and never on a real
@@ -641,7 +669,7 @@ a full scan, so a sync and a full scan are the same operation here.
   saved blocks to the agreement point, which is the newest block whose hash the wallet and the server
   agree on. Anything the wallet saved above that point was replaced by a reorganisation of the chain,
   and it is rebuilt from the server's blocks.
-- **Plan the round.** Resolved 2026-09-28: the round splits into two pools, not one queue. The
+- **Plan the round.** The round splits into two pools, not one queue. The
   **confirmed pool** is every position an earlier round already established, each with its frozen
   decoys — fully known in advance, so nothing about it needs a network round trip to identify. On a
   wallet's first sync this pool is empty. The **undiscovered pool** is whatever the ledger hasn't yet
@@ -670,7 +698,7 @@ a full scan, so a sync and a full scan are the same operation here.
   is a pure local computation over answers already in hand, once the round's batches are back — no
   further round trip unless it reveals the boundary moved (the third-sync case below). For the
   undiscovered pool, the crate extends by the keychain's **shortfall**: how many more positions it
-  needs to end in `stop_gap` unused ones in a row. Corrected 2026-09-28 — an earlier version of this
+  needs to end in `stop_gap` unused ones in a row. Corrected — an earlier version of this
   bullet said the extension had to go one `batch_size` segment at a time, which is wrong. The
   shortfall is known before any answer arrives, and answers can only raise it: a used position resets
   the unused run and demands more positions, and an unused one never demands fewer. So every position
@@ -796,8 +824,7 @@ above). This section is the timing half of A3's mitigation.
 
 ### What Haystack builds
 
-- **The next sync's delay is drawn the moment a sync finishes, and nothing moves it. Resolved
-  2026-09-25, built in Week 2** (`SyncTimer`, `haystack-electrum/src/schedule.rs`). A payment
+- **The next sync's delay is drawn the moment a sync finishes, and nothing moves it. Built in Week 2** (`SyncTimer`, `haystack-electrum/src/schedule.rs`). A payment
   landing, an address being revealed or the user opening the app can't shorten or lengthen it. If a
   sync's timing never depends on what happened in the wallet since the last one, a timing
   correlation has nothing to find, however the delay itself is distributed.
@@ -860,6 +887,10 @@ Ranked by how much they threaten the design.
 1. **Decoy pool acquisition and sharing.** A bundled static pool is subtractable. A dynamically
    fetched pool leaks at fetch time. A per-wallet derived pool from a large public set may be the
    answer, but "large public set" needs to be pinned down. **Highest risk item in the project.**
+   Decided for the hackathon: chain decoys are found through the sync server, knowing that
+   server can name them all from its own log. The attack is described, not built, and the independent
+   lookup server waits until after the hackathon. Details in "Where decoys come from", under "Yet to
+   be built or decided".
 2. **Can synthetic wallets be made statistically indistinguishable from real ones**, and how would
    we know? This needs a discriminator, which is really an A2 attack, which is the tool anyway.
 3. **Cost of `increment_padding` over time.** Every new address multiplies decoy growth. Does a

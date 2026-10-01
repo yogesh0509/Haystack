@@ -2,6 +2,8 @@
 //! the batch level. See `docs/02-design.md`, "haystack-electrum: the padded sync client," for why this can't be a wrapper
 //! around `bdk_electrum` itself.
 
+pub mod cache_file;
+pub mod chain;
 pub mod client;
 pub mod decoy;
 pub mod key;

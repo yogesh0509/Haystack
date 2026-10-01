@@ -7,6 +7,10 @@
 //!    so Haystack needs a second stage;
 //! 3. after a one-block reorganisation moves that block's transactions to a new block, so the
 //!    chain-tip agreement and the merkle proofs run against changed history.
+//!
+//! The padded client carries its saved cache (`haystack_electrum::cache_file`) from round to round,
+//! as a restarted wallet would, so round 3 also checks that proofs saved before the reorganisation
+//! aren't served for the block that replaced theirs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -14,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use bdk_wallet::bitcoin::{Amount, BlockHash, OutPoint, Txid};
 use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::{Balance, KeychainKind, Wallet};
+use haystack_electrum::cache_file::SavedCache;
 use haystack_electrum::client::HaystackElectrumClient;
 use haystack_electrum::key::DecoyKey;
 use haystack_electrum::keychain::Keychain;
@@ -74,17 +79,19 @@ impl SessionLog for MemoryLog {
 fn padded_round(
     env: &TestEnv,
     wallet: &mut Wallet,
-    ledger: Ledger,
+    (ledger, cache): (Ledger, SavedCache),
     key: &DecoyKey,
     log: &MemoryLog,
-) -> Result<Ledger, Error> {
+) -> Result<(Ledger, SavedCache), Error> {
     let client = HaystackElectrumClient::new(electrum(env)?, key.clone(), 10)
         .with_ledger(ledger)
         .map_err(|e| format!("{e:?}"))?
+        .with_saved_cache(cache)
         .with_session_log(log.clone());
     let update = client.full_scan(wallet.start_full_scan(), STOP_GAP, 50, false)?;
     wallet.apply_update(update)?;
-    Ok(client.into_ledger())
+    let cache = client.saved_cache();
+    Ok((client.into_ledger(), cache))
 }
 
 fn reals_per_stage(round: &SessionRound) -> BTreeMap<u32, usize> {
@@ -104,7 +111,7 @@ fn padded_scans_leave_the_wallet_exactly_as_plain_scans_do() -> Result<(), Error
     }
     let key = rw.decoy_key();
     let (mut plain, mut padded) = (rw.wallet(), rw.wallet());
-    let mut ledger = Ledger::new(&key);
+    let mut ledger = (Ledger::new(&key), SavedCache::default());
     let log = MemoryLog::default();
 
     // Round 1.
@@ -112,6 +119,7 @@ fn padded_scans_leave_the_wallet_exactly_as_plain_scans_do() -> Result<(), Error
     ledger = padded_round(&env, &mut padded, ledger, &key, &log)?;
     let s1 = snapshot(&plain);
     assert_eq!(snapshot(&padded), s1);
+    assert!(!ledger.1.anchors.is_empty(), "round 1 saved its proofs");
     assert_eq!((s1.external, s1.internal), (Some(30), Some(1)));
     assert_eq!(s1.txs.len(), 8);
     assert_eq!(s1.txs.iter().filter(|(_, at)| at.is_none()).count(), 2);

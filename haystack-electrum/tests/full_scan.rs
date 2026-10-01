@@ -26,12 +26,14 @@ use electrum_client::{
     ListUnspentRes, Param, RawHeaderNotification, ScriptStatus, ServerFeaturesRes,
     ToElectrumScriptHash, TxidFromPosRes,
 };
+use bdk_core::bitcoin::constants::genesis_block;
+use haystack_electrum::chain::ChainDecoys;
 use haystack_electrum::client::{HaystackElectrumClient, LedgerStore};
 use haystack_electrum::decoy::decoy_script;
 use haystack_electrum::key::DecoyKey;
 use haystack_electrum::keychain::Keychain;
 use haystack_electrum::ledger::Ledger;
-use haystack_electrum::ledger_file::LedgerFile;
+use haystack_electrum::ledger_file::{export, import, LedgerFile};
 use haystack_electrum::session::{SessionLog, SessionRound};
 
 const STOP_GAP: usize = 50;
@@ -91,6 +93,8 @@ struct FakeServer {
     tx_requests: Mutex<Vec<Txid>>,
     /// Receive this many batches, then drop the connection on the next.
     fail_after: Option<usize>,
+    /// Transaction ids by height and position, for `txid_from_pos`; position 0 is the coinbase.
+    blocks: Vec<Vec<Txid>>,
 }
 
 impl FakeServer {
@@ -117,9 +121,47 @@ impl FakeServer {
         Self::with_payments(PAID.iter().map(|&(k, i)| real_spk(k, i)))
     }
 
+    /// Other people's payments in `heights` blocks of `per_block` transactions each, unconfirmed
+    /// so the scan needs no proofs. Every seventh recipient has 25 transactions, more than a chain
+    /// decoy may have; the rest have one.
+    fn with_chain(mut self, heights: u32, per_block: u32) -> Self {
+        self.blocks.push(vec![Txid::all_zeros()]);
+        for h in 1..=heights {
+            let mut block = vec![Txid::all_zeros()];
+            for p in 1..=per_block {
+                let script = other_spk(h, p);
+                let mut tx = pay_to(&script, 0);
+                tx.input[0].previous_output = OutPoint::new(
+                    Txid::hash(&[h.to_be_bytes(), p.to_be_bytes()].concat()),
+                    0,
+                );
+                let txid = tx.compute_txid();
+                let heavy = (h * per_block + p).is_multiple_of(7);
+                let mut history = vec![GetHistoryRes { height: 0, tx_hash: txid, fee: None }];
+                if heavy {
+                    history.extend((1..25u32).map(|n| GetHistoryRes {
+                        height: 0,
+                        tx_hash: Txid::hash(&[txid.to_byte_array().as_slice(), &n.to_be_bytes()].concat()),
+                        fee: None,
+                    }));
+                }
+                self.history.insert(script, history);
+                self.txs.insert(txid, tx);
+                block.push(txid);
+            }
+            self.blocks.push(block);
+        }
+        self
+    }
+
     fn queried(&self) -> Vec<ScriptBuf> {
         self.batches.lock().unwrap().concat()
     }
+}
+
+fn other_spk(height: u32, pos: u32) -> ScriptBuf {
+    let seed = [b"someone else".as_slice(), &height.to_be_bytes(), &pos.to_be_bytes()].concat();
+    ScriptBuf::new_p2wpkh(&WPubkeyHash::hash(&seed))
 }
 
 fn txids(r: &FullScanResponse<Keychain>) -> BTreeSet<Txid> {
@@ -498,7 +540,10 @@ impl ElectrumApi for FakeServer {
         unimplemented!()
     }
     fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
-        unimplemented!()
+        Ok(RawHeaderNotification {
+            height: self.blocks.len().saturating_sub(1),
+            header: serialize(&genesis_block(Network::Regtest).header),
+        })
     }
     fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error> {
         unimplemented!()
@@ -541,8 +586,8 @@ impl ElectrumApi for FakeServer {
     {
         unimplemented!()
     }
-    fn script_get_history(&self, _: &Script) -> Result<Vec<GetHistoryRes>, Error> {
-        unimplemented!()
+    fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        Ok(self.history.get(script).cloned().unwrap_or_default())
     }
     fn script_list_unspent(&self, _: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         unimplemented!()
@@ -581,8 +626,12 @@ impl ElectrumApi for FakeServer {
     {
         unimplemented!()
     }
-    fn txid_from_pos(&self, _: usize, _: usize) -> Result<Txid, Error> {
-        unimplemented!()
+    fn txid_from_pos(&self, height: usize, pos: usize) -> Result<Txid, Error> {
+        self.blocks
+            .get(height)
+            .and_then(|b| b.get(pos))
+            .copied()
+            .ok_or_else(|| Error::Protocol(serde_json::json!("no transaction at that position")))
     }
     fn txid_from_pos_with_merkle(&self, _: usize, _: usize) -> Result<TxidFromPosRes, Error> {
         unimplemented!()
@@ -593,4 +642,145 @@ impl ElectrumApi for FakeServer {
     fn ping(&self) -> Result<(), Error> {
         unimplemented!()
     }
+}
+
+fn chain_server() -> FakeServer {
+    FakeServer::wallet().with_chain(200, 10)
+}
+
+fn chain_client(server: &FakeServer) -> HaystackElectrumClient<&FakeServer> {
+    HaystackElectrumClient::new(server, key(), 10).with_chain_decoys(ChainDecoys::new(0.3))
+}
+
+#[test]
+fn chain_decoys_have_history_and_never_reach_the_wallet() {
+    let upstream = BdkElectrumClient::new(FakeServer::wallet())
+        .full_scan(request(), STOP_GAP, 5, false)
+        .unwrap();
+    let server = chain_server();
+    let log = MemoryLog::default();
+    let ours = chain_client(&server)
+        .with_session_log(log.clone())
+        .full_scan(request(), STOP_GAP, 50, false)
+        .unwrap();
+    assert_eq!(txids(&ours), txids(&upstream));
+    assert_eq!(seen(&ours), seen(&upstream));
+    assert_eq!(ours.last_active_indices, upstream.last_active_indices);
+
+    let rounds = log.0.lock().unwrap();
+    let round = &rounds[0];
+    assert_eq!(round.chain_share, 0.3);
+    let chain: Vec<_> = round
+        .queries
+        .iter()
+        .filter(|q| q.source == Some("chain"))
+        .collect();
+    // 151 positions x 9 decoys x 0.3 = 407.7 expected, give or take the keyed rounding.
+    assert!((350..=460).contains(&chain.len()), "{} chain decoys", chain.len());
+    assert!(chain
+        .iter()
+        .all(|q| matches!(q.tx_count, Some(n) if (1..=ChainDecoys::DEFAULT_MAX_HISTORY).contains(&n))));
+    assert_eq!(
+        chain.iter().map(|q| q.scripthash).collect::<BTreeSet<_>>().len(),
+        chain.len(),
+        "no chain decoy is used twice"
+    );
+    // The leak this design accepts: the server checked each chain decoy's history before it
+    // was queried, in a lookup no real wallet makes.
+    let checked: BTreeSet<[u8; 32]> = round
+        .probes
+        .iter()
+        .filter_map(|p| match p {
+            haystack_electrum::chain::Probe::History { scripthash, kept: true, .. } => Some(*scripthash),
+            _ => None,
+        })
+        .collect();
+    assert!(chain.iter().all(|q| checked.contains(&q.scripthash)));
+    assert!(round.probes.iter().any(|p| matches!(
+        p,
+        haystack_electrum::chain::Probe::History { tx_count: 25, kept: false, .. }
+    )));
+}
+
+#[test]
+fn chain_decoys_are_frozen_like_any_other() {
+    let server = chain_server();
+    let log = MemoryLog::default();
+    let client = chain_client(&server).with_session_log(log.clone());
+    let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let first: BTreeSet<_> = server.queried().into_iter().collect();
+    server.batches.lock().unwrap().clear();
+    let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let second: BTreeSet<_> = server.queried().into_iter().collect();
+    assert_eq!(first, second);
+    assert!(log.0.lock().unwrap()[1].probes.is_empty(), "nothing new to find");
+
+    // Across a restart, through the ledger file.
+    let text = export(&client.into_ledger());
+    assert!(text.contains("haystack-ledger/2"));
+    let restarted = chain_client(&server)
+        .with_ledger(import(&text, &key()).unwrap())
+        .unwrap();
+    server.batches.lock().unwrap().clear();
+    let _ = restarted.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    assert_eq!(server.queried().into_iter().collect::<BTreeSet<_>>(), first);
+}
+
+#[test]
+fn chain_decoys_refuse_prevout_fetching() {
+    let server = chain_server();
+    assert!(chain_client(&server)
+        .full_scan(request(), STOP_GAP, 50, true)
+        .is_err());
+    assert!(server.queried().is_empty());
+}
+
+#[derive(Clone, Default)]
+struct MemoryCache(Arc<Mutex<Option<haystack_electrum::cache_file::SavedCache>>>);
+
+impl haystack_electrum::cache_file::CacheStore for MemoryCache {
+    fn save(
+        &self,
+        cache: &haystack_electrum::cache_file::SavedCache,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        *self.0.lock().unwrap() = Some(cache.clone());
+        Ok(())
+    }
+}
+
+#[test]
+fn a_restart_with_the_saved_cache_refetches_nothing_real_or_decoy() {
+    let server = chain_server();
+    let store = MemoryCache::default();
+    let first = chain_client(&server).with_cache_store(store.clone());
+    let _ = first.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let fetched: BTreeSet<Txid> = server.tx_requests.lock().unwrap().drain(..).collect();
+    let real_txids: BTreeSet<Txid> = PAID
+        .iter()
+        .flat_map(|&(k, i)| server.history[&real_spk(k, i)].iter().map(|h| h.tx_hash))
+        .collect();
+    assert!(real_txids.is_subset(&fetched));
+    assert!(fetched.len() > real_txids.len(), "decoy transactions were fetched too");
+    let ledger = export(&first.into_ledger());
+
+    // Restarted with the cache: the server sees no transaction fetch at all.
+    let saved = store.0.lock().unwrap().clone().expect("saved after the scan");
+    let _ = chain_client(&server)
+        .with_ledger(import(&ledger, &key()).unwrap())
+        .unwrap()
+        .with_saved_cache(saved)
+        .full_scan(request(), STOP_GAP, 50, false)
+        .unwrap();
+    assert!(server.tx_requests.lock().unwrap().is_empty());
+
+    // Restarted without it: reals and decoys are refetched together, never one kind alone.
+    let _ = chain_client(&server)
+        .with_ledger(import(&ledger, &key()).unwrap())
+        .unwrap()
+        .full_scan(request(), STOP_GAP, 50, false)
+        .unwrap();
+    let refetched: BTreeSet<Txid> = server.tx_requests.lock().unwrap().drain(..).collect();
+    // The probes' own transaction fetches came first and are gone; the follow-ups repeat exactly.
+    assert!(real_txids.is_subset(&refetched));
+    assert!(refetched.is_subset(&fetched));
 }

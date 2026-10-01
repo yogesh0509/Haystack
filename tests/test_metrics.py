@@ -63,3 +63,36 @@ class PrecisionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FundedPrecisionTest(unittest.TestCase):
+    """The regtest worked example of docs/02-design.md: 133 reals, 8 funded, padding 10."""
+
+    def session(self, chain_decoys):
+        from attack.observe import Fact
+        reals = random_pool(133, seed="reals")
+        decoys = random_pool(1197, seed="decoys")
+        facts = {s: Fact(1 if i < 8 else 0, "p2wpkh") for i, s in enumerate(reals)}
+        facts.update({s: Fact(1 if i < chain_decoys else 0, "p2wpkh") for i, s in enumerate(decoys)})
+        return observe([reals + decoys], [facts]), reals
+
+    def test_hmac_only_exposes_every_funded_address_while_the_headline_stays_high(self):
+        obs, reals = self.session(chain_decoys=0)
+        s = run(obs, reals)
+        self.assertEqual((s.funded, s.with_history), (8, 8))
+        self.assertEqual(s.funded_precision, 1.0)
+        self.assertEqual(s.funded_bits, 0.0)
+        self.assertGreater(s.precision_bits, 3.0)
+
+    def test_matched_chain_decoys_put_funded_addresses_at_chance(self):
+        obs, reals = self.session(chain_decoys=72)
+        s = run(obs, reals)
+        self.assertEqual((s.funded, s.with_history), (8, 80))
+        self.assertAlmostEqual(s.funded_precision, 0.1)
+        self.assertAlmostEqual(s.funded_bits, math.log2(10))
+
+    def test_no_funded_address_means_no_funded_score(self):
+        reals = random_pool(70, seed="plain")
+        s = run(observe([reals]), reals)
+        self.assertIsNone(s.funded_precision)
+        self.assertIsNone(s.funded_bits)

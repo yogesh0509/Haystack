@@ -16,6 +16,8 @@ COLUMNS = (
     ("joint/R", lambda s: s.per_real(s.joint_bits)),
     ("truth/R", lambda s: s.per_real(s.truth_bits)),
     ("adv", lambda s: s.advantage),
+    ("fund-b", lambda s: s.funded_bits),
+    ("fund%", lambda s: None if s.funded_precision is None else 100 * s.funded_precision),
 )
 
 LEGEND = """\
@@ -25,6 +27,8 @@ chance%  |R| / |Q|: what a same-size random guess gets right, for comparison    
 joint/R  entropy of the posterior over the real subset, per real address        [calibration check]
 truth/R  -log2 P_adversary(true R) per real: bits still missing, correctness-aware   [calibration check]
 adv      prec - chance; reads 0 for plain Electrum AND for a perfect scheme, kept as a secondary view
+fund-b   prec-b restricted to scripthashes with history: the funded reals, against their own chance
+fund%    share of real among the top-|funded| guesses that have history; -- when no real has history
 
 Mean per-address entropy was implemented and dropped: it falls as padding rises -- see
 docs/03-metric.md."""
@@ -53,15 +57,19 @@ def ceiling(n_real, padding):
     q = round(padding * n_real)
     top = math.log2(q / n_real)
     joint = log_comb(q, n_real) / LN2 / n_real
-    return [top, 100 * n_real / q, 100 * n_real / q, joint, joint, 0.0]
+    return [top, 100 * n_real / q, 100 * n_real / q, joint, joint, 0.0, None, None]
 
 
 def _mean(xs):
-    xs = list(xs)
+    xs = [x for x in xs if x is not None]
+    if not xs:
+        return None
     return math.inf if any(math.isinf(x) for x in xs) else math.fsum(xs) / len(xs)
 
 
 def _fmt(v):
+    if v is None:
+        return f"{'--':>8}"
     return f"{'inf':>8}" if math.isinf(v) else f"{v:8.2f}"
 
 

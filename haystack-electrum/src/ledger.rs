@@ -3,18 +3,26 @@
 //! whatever this ledger already knows needs no further network round trip to include in the next
 //! round.
 //!
+//! It also holds every chain-sourced decoy's script. An HMAC-direct decoy is rebuilt from the key,
+//! but a chain decoy was picked from the chain at one moment and can't be: asking again could pick
+//! a different address, which the server would read as a withdrawal.
+//!
 //! This module is pure in-memory logic; wiring it to durable storage is a separate step.
 
 use std::collections::BTreeMap;
+
+use bdk_core::bitcoin::ScriptBuf;
 
 use crate::key::DecoyKey;
 use crate::keychain::Keychain;
 
 pub type Position = (Keychain, u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerEntry {
     pub decoy_count: u32,
+    /// Decoy number `j` to its chain-sourced script; every other `j` is HMAC-direct.
+    pub chain: BTreeMap<u32, ScriptBuf>,
 }
 
 /// The frozen decoy counts only mean anything together with the key that generated the decoys,
@@ -85,8 +93,39 @@ impl Ledger {
     pub fn freeze(&mut self, position: Position, decoy_count: u32) -> u32 {
         self.entries
             .entry(position)
-            .or_insert(LedgerEntry { decoy_count })
+            .or_insert(LedgerEntry {
+                decoy_count,
+                chain: BTreeMap::new(),
+            })
             .decoy_count
+    }
+
+    /// Record that decoy `j` of a frozen position is the chain-sourced `script`. Only for a decoy
+    /// that hasn't been sent yet: `false`, and no change, if the position isn't frozen, `j` is out of
+    /// range, or `j` already has a script.
+    pub fn set_chain_decoy(&mut self, position: Position, j: u32, script: ScriptBuf) -> bool {
+        match self.entries.get_mut(&position) {
+            Some(e) if j < e.decoy_count && !e.chain.contains_key(&j) => {
+                e.chain.insert(j, script);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The chain-sourced decoys of a position, by `j`. Empty for an unfrozen position.
+    pub fn chain_decoys(&self, position: Position) -> BTreeMap<u32, ScriptBuf> {
+        self.entries
+            .get(&position)
+            .map(|e| e.chain.clone())
+            .unwrap_or_default()
+    }
+
+    /// Every chain-sourced decoy script in the ledger, across all positions.
+    pub fn all_chain_decoys(&self) -> impl Iterator<Item = (Position, u32, &ScriptBuf)> + '_ {
+        self.entries
+            .iter()
+            .flat_map(|(&pos, e)| e.chain.iter().map(move |(&j, s)| (pos, j, s)))
     }
 
     /// The confirmed pool: every position this ledger already knows about, with its frozen decoy
@@ -250,6 +289,20 @@ mod tests {
                 offered: other.fingerprint(),
             })
         );
+    }
+
+    #[test]
+    fn a_chain_decoy_is_kept_once_and_only_inside_the_frozen_count() {
+        let mut ledger = Ledger::for_tests();
+        let pos = (Keychain::External, 0);
+        let a = ScriptBuf::from_bytes(vec![0x00, 0x14, 1]);
+        assert!(!ledger.set_chain_decoy(pos, 0, a.clone()), "not frozen yet");
+        ledger.freeze(pos, 2);
+        assert!(ledger.set_chain_decoy(pos, 1, a.clone()));
+        assert!(!ledger.set_chain_decoy(pos, 1, ScriptBuf::new()), "already set");
+        assert!(!ledger.set_chain_decoy(pos, 2, a.clone()), "past the count");
+        assert_eq!(ledger.chain_decoys(pos), BTreeMap::from([(1, a)]));
+        assert_eq!(ledger.all_chain_decoys().count(), 1);
     }
 
     #[test]

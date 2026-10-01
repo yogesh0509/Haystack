@@ -4,6 +4,11 @@
 //! driving the scan in stages via the planner: each stage sends every real script together with its
 //! frozen decoys in shuffled batches, and only real answers reach the response.
 //!
+//! No `populate_tx_cache` either: a cache filled from the wallet's own transactions holds reals only,
+//! and after a restart the decoys alone would be refetched (`cache_file.rs`). The client's caches are
+//! filled only by what it fetches, and `with_saved_cache` / `with_cache_store` keep them across
+//! restarts.
+//!
 //! No `sync` and no `transaction_broadcast`. Every sync is a full scan, since a revealed-only sync
 //! would drop the unused tail and its decoys, and broadcasting through this session's server would
 //! tie the transaction to it (`docs/01-threat-model.md`).
@@ -17,6 +22,8 @@ use bdk_core::{BlockId, CheckPoint, ConfirmationBlockTime, TxUpdate};
 use electrum_client::{ElectrumApi, Error, HeaderNotification, ToElectrumScriptHash};
 use rand::seq::SliceRandom;
 
+use crate::cache_file::{CacheStore, SavedCache};
+use crate::chain::{self, chain_count, ChainDecoys};
 use crate::decoy::decoys_for;
 use crate::key::DecoyKey;
 use crate::keychain::{DecoyKeychain, Keychain};
@@ -40,7 +47,8 @@ pub trait LedgerStore: Send + Sync {
 
 enum Tag {
     Real(Position),
-    Decoy(Position, u32),
+    /// Decoy `j` of a position, and whether it came from the chain.
+    Decoy(Position, u32, bool),
 }
 
 pub struct HaystackElectrumClient<E> {
@@ -50,7 +58,9 @@ pub struct HaystackElectrumClient<E> {
     ledger: Mutex<Ledger>,
     store: Option<Box<dyn LedgerStore>>,
     session_log: Option<Box<dyn SessionLog>>,
+    cache_store: Option<Box<dyn CacheStore>>,
     padding: u32,
+    chain: Option<ChainDecoys>,
     tx_cache: Mutex<HashMap<Txid, Arc<Transaction>>>,
     block_header_cache: Mutex<HashMap<u32, Header>>,
     anchor_cache: Mutex<HashMap<(Txid, BlockHash), ConfirmationBlockTime>>,
@@ -68,7 +78,9 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
             ledger: Mutex::new(ledger),
             store: None,
             session_log: None,
+            cache_store: None,
             padding: padding.max(1),
+            chain: None,
             tx_cache: Default::default(),
             block_header_cache: Default::default(),
             anchor_cache: Default::default(),
@@ -91,6 +103,15 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
         self
     }
 
+    /// Take a share of each new position's decoys from the chain, so they have history like a
+    /// restored wallet's funded addresses. **They are found through the sync server, which can name
+    /// every one of them from its own log** (`chain.rs`). Off by default, which keeps every decoy
+    /// HMAC-direct. Positions already frozen keep the decoys they have.
+    pub fn with_chain_decoys(mut self, config: ChainDecoys) -> Self {
+        self.chain = (config.share > 0.0).then_some(config);
+        self
+    }
+
     pub fn ledger(&self) -> MutexGuard<'_, Ledger> {
         self.ledger.lock().unwrap()
     }
@@ -100,12 +121,39 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
         self.ledger.into_inner().unwrap()
     }
 
-    /// Same as `BdkElectrumClient::populate_tx_cache`.
-    pub fn populate_tx_cache(&self, txs: impl IntoIterator<Item = impl Into<Arc<Transaction>>>) {
-        let mut cache = self.tx_cache.lock().unwrap();
-        for tx in txs {
-            let tx = tx.into();
-            cache.insert(tx.compute_txid(), tx);
+    /// Restore the transactions and proofs a previous client fetched, from `CacheFile::load`.
+    pub fn with_saved_cache(self, saved: SavedCache) -> Self {
+        {
+            let mut txs = self.tx_cache.lock().unwrap();
+            for tx in saved.txs {
+                txs.insert(tx.compute_txid(), tx);
+            }
+            let mut anchors = self.anchor_cache.lock().unwrap();
+            for (txid, anchor) in saved.anchors {
+                anchors.insert((txid, anchor.block_id.hash), anchor);
+            }
+        }
+        self
+    }
+
+    /// Save the caches after every scan, finished or not. A failed save is returned as the scan's
+    /// error.
+    pub fn with_cache_store(mut self, store: impl CacheStore + 'static) -> Self {
+        self.cache_store = Some(Box::new(store));
+        self
+    }
+
+    /// Everything fetched so far: every transaction and proof, reals and decoys alike.
+    pub fn saved_cache(&self) -> SavedCache {
+        SavedCache {
+            txs: self.tx_cache.lock().unwrap().values().cloned().collect(),
+            anchors: self
+                .anchor_cache
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|((txid, _), anchor)| (*txid, *anchor))
+                .collect(),
         }
     }
 
@@ -120,9 +168,18 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
         fetch_prev_txouts: bool,
     ) -> Result<FullScanResponse<K>, Error> {
         let request: FullScanRequest<K> = request.into();
+        if fetch_prev_txouts && self.chain.is_some() {
+            // It reads inputs of real transactions only, so with decoys that have transactions the
+            // server would see which ones are real.
+            return Err(message(
+                "fetch_prev_txouts isn't supported with chain-sourced decoys",
+            ));
+        }
         let mut round = SessionRound {
             started: request.start_time(),
             padding: self.padding,
+            chain_share: self.chain.map_or(0.0, |c| c.share),
+            probes: Vec::new(),
             stop_gap,
             batch_size,
             queries: Vec::new(),
@@ -135,6 +192,12 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
             }
             log.record(&round)
                 .map_err(|e| message(format!("session log not written: {e}")))?;
+        }
+        // After the log, so a failed save never hides a round that reached the server.
+        if let Some(store) = &self.cache_store {
+            store
+                .save(&self.saved_cache())
+                .map_err(|e| message(format!("cache not saved: {e}")))?;
         }
         result
     }
@@ -163,7 +226,19 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
             }
         }
 
+        // Chain decoys are drawn from heights up to the tip.
+        let chain_tip = match (&self.chain, &tip_and_latest_blocks) {
+            (None, _) => 0,
+            (Some(_), Some((tip, _))) => tip.height(),
+            (Some(_), None) => self.inner.block_headers_subscribe()?.height as u32,
+        };
+
         let mut ledger = self.ledger.lock().unwrap();
+        // Never pick one of the wallet's own scripts, or one already used, as a chain decoy.
+        let mut exclude: HashSet<ScriptBuf> = ledger
+            .all_chain_decoys()
+            .map(|(_, _, s)| s.clone())
+            .collect();
         let mut planner = RoundPlanner::new(
             stop_gap,
             keychains.keys().copied(),
@@ -186,28 +261,56 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
 
             let mut items = Vec::<(Tag, ScriptBuf)>::new();
             let mut froze_new = false;
+            // Every real script of the stage first, so none of them can be picked as a chain decoy.
+            let mut reals = Vec::new();
             for (kc, index) in stage {
                 let pulled = spks.entry(kc).or_default();
                 let Some(real) = pull_spk(&mut request, &keychains[&kc], pulled, index)? else {
                     planner.exhausted(kc, pulled.len() as u32);
                     continue;
                 };
+                exclude.insert(real.clone());
+                reals.push(((kc, index), real));
+            }
+            for ((kc, index), real) in reals {
                 let frozen = ledger.get((kc, index));
                 let count = frozen.unwrap_or(self.decoys_per_position);
-                let decoys =
+                let hmac =
                     decoys_for(&self.decoy_key, &real, kc, index, count).ok_or_else(|| {
                         message(format!("no decoy shape for the script at {kc:?}/{index}"))
                     })?;
                 if frozen.is_none() {
                     ledger.freeze((kc, index), count);
                     froze_new = true;
+                    if let Some(config) = self.chain {
+                        let n = chain_count(&self.decoy_key, kc, index, count, config.share);
+                        for j in 0..n {
+                            let found = chain::find(
+                                &self.inner,
+                                &self.decoy_key,
+                                &real,
+                                kc,
+                                index,
+                                j,
+                                chain_tip,
+                                &exclude,
+                                config,
+                                &mut round.probes,
+                            )?;
+                            // None: nothing acceptable found, so this one stays HMAC-direct.
+                            if let Some(script) = found {
+                                exclude.insert(script.clone());
+                                ledger.set_chain_decoy((kc, index), j, script);
+                            }
+                        }
+                    }
                 }
+                let from_chain = ledger.chain_decoys((kc, index));
                 items.push((Tag::Real((kc, index)), real));
-                items.extend(
-                    (0u32..)
-                        .zip(decoys)
-                        .map(|(j, d)| (Tag::Decoy((kc, index), j), d)),
-                );
+                items.extend((0u32..).zip(hmac).map(|(j, d)| match from_chain.get(&j) {
+                    Some(c) => (Tag::Decoy((kc, index), j, true), c.clone()),
+                    None => (Tag::Decoy((kc, index), j, false), d),
+                }));
             }
 
             if froze_new {
@@ -226,9 +329,11 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
                 // Logged before sending: if the call fails, these still reached the server.
                 let logged_from = round.queries.len();
                 round.queries.extend(chunk.iter().map(|(tag, script)| {
-                    let ((keychain, index), decoy) = match *tag {
-                        Tag::Real(pos) => (pos, None),
-                        Tag::Decoy(pos, j) => (pos, Some(j)),
+                    let ((keychain, index), decoy, source) = match *tag {
+                        Tag::Real(pos) => (pos, None, None),
+                        Tag::Decoy(pos, j, chain) => {
+                            (pos, Some(j), Some(if chain { "chain" } else { "hmac" }))
+                        }
                     };
                     LoggedQuery {
                         scripthash: *script.to_electrum_scripthash(),
@@ -237,6 +342,7 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
                         keychain,
                         index,
                         decoy,
+                        source,
                         script_type: script_type(script),
                         tx_count: None,
                     }

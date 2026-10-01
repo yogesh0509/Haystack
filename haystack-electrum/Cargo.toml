@@ -16,5 +16,8 @@ serde_json = "1"
 # Only so `full_scan` accepts `bdk_wallet::KeychainKind` as its keychain type.
 bdk_wallet = { version = "2.1.0", default-features = false, features = ["std"], optional = true }
 
+[build-dependencies]
+bitcoin_hashes = "0.14"
+
 [dev-dependencies]
 bdk_electrum = "0.23.2"
