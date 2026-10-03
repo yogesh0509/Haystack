@@ -653,7 +653,7 @@ version = "0.1.0"
 dependencies = [
  "bdk_electrum",
  "bdk_wallet",
- "haystack-electrum",
+ "serde_json",
 ]
 
 [[package]]

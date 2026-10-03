@@ -1,8 +1,8 @@
 # The problem
 
 Every claim below has a command next to it. Run them. The outputs in §1 and §2 were captured
-against live infrastructure. The output in §4 was regenerated with `capture/`, which runs real scans
-with the published `bdk_wallet` 2.1.0 the project builds against. The results in §6 are checked by
+against live infrastructure. The output in §4 was regenerated with `capture/`, which runs stock scans
+with the published `bdk_wallet` 2.1.0 and `bdk_electrum` 0.23.2 the project builds against. The results in §6 are checked by
 `tests/test_regression.py`, which runs the project's own attacker.
 
 Each section states a claim and gives the command that verifies it, so nothing here needs to be taken

@@ -30,9 +30,10 @@ problem worth noticing.
 
 `honeypot_electrum.py` handles both single JSON-RPC requests and the batched arrays that
 `electrum_client` sends during a full scan. It writes `honeypot-log.json` on shutdown via any of
-Ctrl-C, SIGINT or SIGTERM. To point a real `bdk_wallet` scan at it, run `capture/` (see
-`../capture/README.md`).
+Ctrl-C, SIGINT or SIGTERM. To point a stock `bdk_wallet` scan at it, run `capture/` (see
+`../capture/README.md`), or the demo wallet with `haystack-demo --url tcp://127.0.0.1:50001`.
 
 Why re-randomised decoys fail, and why scheduled rotation is worse than none, used to be a
-simulation here with its own copy of the intersection attack. It is now `python3 -m attack
-strategies`, run by the same attacker every other score comes from (`../docs/00-problem.md` §6).
+simulation here with its own copy of the intersection attack. It is now `tests/test_regression.py`
+(`python3 -m unittest -v tests.test_regression`), run by the same attacker every other score comes
+from (`../docs/00-problem.md` §6).

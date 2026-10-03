@@ -32,17 +32,18 @@ need a live wallet or a running honeypot to reproduce. The plain pair:
   receiving: 600 entries (6 connections × 100 scripthashes), each tagged with its connection, batch,
   and position.
 - `bdk-capture-truth.json` — what the wallet itself recorded sending, from `capture/` (see
-  `capture/README.md`): the same six rounds, independently, as the wallet's own derivation.
+  `capture/README.md`): the same six rounds, independently, as the wallet's own derivation. Running
+  `capture/` again reproduces this file exactly.
 
 `attack/observe.py`'s `check_plain()` diffs the two; the plain-capture test requires them to match
 exactly (0 unexpected, 0 missing scripthashes in every round).
 
-The padded set, three files from one run of `capture/ --padding 10 --session …` (50 scripts per write)
-against the same honeypot and demo wallet:
+The padded set, two files from six padded syncs of the same demo wallet against the same honeypot
+(50 scripts per write). They were recorded when `capture/` still had a padded mode; the demo
+(`haystack-demo --url tcp://127.0.0.1:50001`) now records the same session-log format, and
+`docs/07-walkthrough.md` case 3 reproduces the result with it:
 
 - `haystack-honeypot-log.json` — 6,000 entries (6 connections × 1,000 scripthashes).
-- `haystack-capture-truth.json` — the wallet's 100 real scripthashes per round, plus the 900 decoys
-  its ledger says it sent.
 - `haystack-session.jsonl` — the client's session log: every query in send order, tagged real or
   decoy, with the server's answer.
 

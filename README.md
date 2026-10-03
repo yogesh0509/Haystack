@@ -27,6 +27,8 @@ and see the exchange rate you're getting.
 
 ## Repo map
 
+**The documents**
+
 | Path | What it is |
 |---|---|
 | [docs/00-problem.md](docs/00-problem.md) | The leak, with commands you can run to verify every claim yourself |
@@ -35,8 +37,24 @@ and see the exchange rate you're getting.
 | [docs/03-metric.md](docs/03-metric.md) | The deanonymisation score — definition, calibration, what it does not capture |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | The four-week plan: what each week delivered, the evidence, known limitations, and what comes after the hackathon |
 | [docs/07-walkthrough.md](docs/07-walkthrough.md) | Testing every case, step by step: the leak, new and restored wallets, chain decoys, restarts, the bandwidth curve |
-| [scripts/](scripts/) | Runnable demonstrations of the problem — see below |
-| [demo/](demo/) | The demo wallet: a local web page with the padding dial, the live score and the bytes each sync costs |
+| [docs/08-ux-and-related-work.md](docs/08-ux-and-related-work.md) | How the demo applies the Bitcoin Design Guide |
+
+**The product**
+
+| Path | What it is |
+|---|---|
+| [haystack-electrum/](haystack-electrum/) | The padded Electrum client: a sibling crate to `bdk_electrum` with the same `full_scan` signature, plus the decoy selector, ledger, cache, chain decoys and session log |
+| [demo/](demo/) | The demo wallet: a local page with a Wallet tab (balance, privacy badge, padding dial and its cost) and a Lab tab (plain against Haystack, the live score, and what the server sees) |
+
+**The evidence**
+
+| Path | What it is |
+|---|---|
+| [attack/](attack/) | The adversary: reads what a server saw and scores it in bits, calibrated so plain Electrum reads `0.00` |
+| [capture/](capture/) | Stock `bdk_wallet` scans that record what the wallet itself queried: the unpadded baseline's answer key |
+| [regtest/](regtest/) | A private Bitcoin chain with paid wallets, for the cases the never-paid demo wallet cannot show |
+| [scripts/](scripts/) | Runnable demonstrations of the problem, including the honeypot server that logs every query |
+| [tests/](tests/) | Unit tests and the committed fixtures behind the headline numbers |
 
 ## Verify the problem in five minutes
 
@@ -76,7 +94,9 @@ cargo run --release -p haystack-regtest --bin sessions -- --out out/sessions
 cargo run --release -p haystack-demo -- --regtest --mean-minutes 2
 ```
 
-`--mean-minutes 2` runs the automatic sync at demo speed; the product default is 30 minutes.
+`--mean-minutes 2` runs the automatic sync at demo speed; the product default is 30 minutes. To
+open the page as an app window, without tabs or an address bar, run
+`cmd.exe /c start msedge --app=http://127.0.0.1:7878` from WSL.
 [demo/README.md](demo/README.md) has the other servers, the flags, and the line-by-line comparison
 with `bdk_wallet`'s own Electrum example.
 

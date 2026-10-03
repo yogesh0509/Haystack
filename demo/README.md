@@ -1,13 +1,19 @@
 # demo/
 
 The demo wallet: `bdk_wallet`'s own Electrum example with Haystack swapped in, behind a local web
-page with the padding dial, the live score and the bandwidth each sync costs.
+page with two tabs. **Wallet** is the Haystack wallet as a user would see it: balance, a privacy
+badge, what the attacker learned, the padding dial and what each setting costs. **Lab** is the
+evidence: the plain and Haystack copies side by side, the attacker's scores, and a picture of what
+the server received.
 
-Two copies of one wallet sync side by side against the same server. **Plain** sends exactly the
-wallet's addresses, as every Electrum wallet does today, and runs only against a local server,
-because it is the leak itself. **Haystack** hides them among decoys at the dial's setting. After
-every sync the repository's own attacker (`python3 -m attack score`) reads that copy's session log
-and tries to pick out the real addresses.
+Two copies of one wallet sync against the same server. **Plain** sends exactly the wallet's
+addresses, as every Electrum wallet does today, and runs only against a local server, because it is
+the leak itself. **Haystack** hides them among decoys at the dial's setting. After every sync the
+repository's own attacker (`python3 -m attack score`) reads that copy's session log and tries to
+pick out the real addresses.
+
+The page is served by the wallet process on `127.0.0.1` only. The Rust process holds the
+descriptors, talks to the Electrum server and writes the ledger; the page only draws the screen.
 
 ## Running it
 
@@ -21,8 +27,11 @@ cargo run --release -p haystack-regtest --bin sessions -- --out out/sessions
 
 # A private regtest chain with a paid wallet. --mean-minutes 2 is demo speed; see below.
 cargo run --release -p haystack-demo -- --regtest --mean-minutes 2
-# then open http://127.0.0.1:7878
+# then open http://127.0.0.1:7878 (http://127.0.0.1:7878/#lab opens the Lab tab)
 ```
+
+For a recording, open the page as an app window, without tabs or an address bar. From WSL:
+`cmd.exe /c start msedge --app=http://127.0.0.1:7878`. Chrome takes the same `--app=` flag.
 
 Other servers:
 
@@ -79,17 +88,37 @@ example the demo uses, and how each one appears in `src/wallet.rs`.
 
 ## What the page shows
 
-- **Balance and transactions** for each copy. They must match: padding costs bandwidth, not
-  correctness.
-- **Bytes per sync**, counted on the connection itself, with TLS included when the server uses it,
-  and how many times the plain sync's bytes the Haystack sync took.
-- **The score**: precision in bits from the many-rounds attacker (T1), and from the structural
-  attacker (T2) when a training set matches the session's client build, padding and chain share.
-  Precision among funded addresses is printed beside each.
+**Wallet tab**
+
+- **Balance**, in BTC with all 8 decimals in thin-space groups, and a "Private sync on · padding N"
+  badge.
+- **What the attacker learned from the last sync**, in two words: one for all addresses and one for
+  the addresses with coin history ("hidden", "partly hidden" or "exposed").
+- **Sync now**, with "Syncing privately… 12 s (the last one took 25.6 s)" while a sync runs, and the
+  automatic sync's next due time.
+- **The padding dial.** A choice stays put until Apply, and the page says "Not applied yet". Under
+  it is the cost of each setting: addresses and KiB per sync, scaled from the last sync, and per day
+  at the product's 30-minute average.
+
+**Lab tab**
+
+- **Balance, transactions, last sync and data** for each copy. Balances must match: padding costs
+  bandwidth, not correctness. Bytes are counted on the connection itself, with TLS included when the
+  server uses it.
+- **The score**, per attacker: the many-rounds attacker (T1), and the structural attacker (T2) when
+  a training set matches the session's client build, padding and chain share. Each shows two numbers
+  of the same size: precision in bits over all addresses, and how many of the addresses with coin
+  history it finds. When T2 can't score, the page says why in plain words and gives the command
+  that fixes it.
+- **What the server sees**: one square per address in the order the server received them, shaded
+  by the attacker's probability that it is the wallet's (`score --view`). Grey is a random guess,
+  red is certain, pale is crossed off as a decoy; a dot marks coin history. A checkbox highlights
+  the real addresses, which only the wallet knows.
 - **The caveat** about what the attacker is assumed to know, and, once chain decoys are used, that
   they hold only against a server that ignores its own log of the lookups that found them.
-- **Restore**: the descriptor and the ledger file, which together are the restore set. Restoring
-  without the ledger asks which dial the wallet used.
+- **The regtest chain**: pay, mine and send, each with its progress and result on the card.
+- **Restore**: the descriptor and the ledger file, which together are the restore set, each with a
+  Copy button. Restoring without the ledger takes the dial setting from a list of the four steps.
 - **The certificate decision** for a TLS server: authority-signed, trusted on first use and pinned,
   or matching the pin. A different certificate from a pinned server is refused before any query
   is sent.

@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from .scoring import TIERS, per_round, rounds_table, run
+from .scoring import TIERS, attack, knowledge, per_round, rounds_table, score, view
 from .curve import curve
 from .a2_structural import TrainingRefused, fit, session_paths
 from .observe import check_plain, check_session, load_capture, load_honeypot, load_session
@@ -21,11 +21,15 @@ def main(argv=None):
     s.add_argument("--train", nargs="+", help="labelled sessions of other wallets (files or directories); needed for T2")
     s.add_argument("--last", action="store_true", help="score only the last round")
     s.add_argument("--json", action="store_true", help="print one JSON object per scored round instead of a table")
+    s.add_argument("--view", action="store_true",
+                   help="with --last --json: add the attacker's probability per scripthash, in arrival order")
 
     v = sub.add_parser("curve", help="bandwidth against score, from regtest's session generator")
     v.add_argument("--dir", required=True, help="output of `cargo run -p haystack-regtest --bin sessions`")
 
     args = ap.parse_args(argv)
+    if args.cmd == "score" and args.view and not (args.last and args.json):
+        ap.error("--view needs --last and --json")
     if args.cmd == "curve":
         try:
             print(curve(args.dir))
@@ -65,21 +69,29 @@ def main(argv=None):
             print(f"round {r['round'] + 1}: {r['missing']} real scripthashes never reached the server",
                   file=sys.stderr)
             return 1
+    views = None
     if args.last:
-        scores = [run(obs.upto(n - 1), truth.real(n - 1), args.tier, model=model)]
+        last, real = obs.upto(n - 1), frozenset(truth.real(n - 1))
+        post = attack(last, knowledge(last, real, model), args.tier)
+        scores = [score(post, last.rounds[-1], real)]
+        if args.view:
+            views = [view(post, last.rounds[-1], real)]
         first = n
     else:
         scores = per_round(obs.upto(n - 1), [truth.real(t) for t in range(n)], args.tier, model=model)
         first = 1
     if args.json:
         for t, sc in enumerate(scores, first):
-            print(json.dumps({
+            line = {
                 "round": t, "tier": args.tier, "n_real": sc.n_real, "n_query": sc.n_query,
                 "precision_bits": sc.precision_bits, "precision": sc.precision, "chance": sc.chance,
                 "funded": sc.funded, "with_history": sc.with_history,
                 "funded_bits": sc.funded_bits, "funded_precision": sc.funded_precision,
                 "funded_chance": sc.funded_chance,
-            }))
+            }
+            if views:
+                line["view"] = views[t - first]
+            print(json.dumps(line))
         return 0
     print(rounds_table(f"{source}, tier {args.tier}", scores))
     return 0

@@ -12,7 +12,7 @@ its complete address set in one burst.
 For BDK, in bdk_wallet/examples/electrum.rs change:
     const ELECTRUM_URL: &str = "tcp://127.0.0.1:50001";
 then:  cargo run --example electrum --features test-utils
-or, without editing BDK:  cargo run --release --manifest-path capture/Cargo.toml
+or, without editing BDK:  cargo run --release -p haystack-capture
 
 Ctrl-C for the summary. Full log written to honeypot-log.json, one entry per
 query, tagged with its connection, batch and position -- the attack harness

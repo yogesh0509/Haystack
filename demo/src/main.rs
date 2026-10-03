@@ -14,7 +14,7 @@
 //! `--regtest` starts `bitcoind` and `electrs` on a private chain, gives the paid demo wallet its
 //! history and gives 12 other wallets theirs, the same population `regtest/`'s session generator
 //! builds, so chain decoys have candidates. Its first sync is a restored wallet's. Without
-//! `--regtest` the wallet is the never-paid public-seed demo wallet from `capture/`, watch-only.
+//! `--regtest` the wallet is the never-paid public-seed demo wallet that `capture/` also scans, watch-only.
 //!
 //! The automatic sync runs on `SyncTimer` with `--mean-minutes` (default 30, the product default).
 //! A presentation passes 2 so automatic syncs happen while people watch.
@@ -129,6 +129,8 @@ struct App {
     /// Copies of each profile's view, readable while that profile is busy syncing.
     views: Mutex<[Value; 2]>,
     log: Mutex<VecDeque<String>>,
+    /// The latest regtest or restore action, so the page can show it where the button was pressed.
+    action: Mutex<Value>,
     pins: PinFile,
     train: PathBuf,
     mean: Duration,
@@ -163,7 +165,7 @@ impl App {
     }
 }
 
-/// The never-paid demo wallet `capture/` scans: watch-only BIP84 descriptors from a public string.
+/// The never-paid demo wallet `capture/` also scans: watch-only BIP84 descriptors from a public string.
 fn capture_wallet() -> anyhow::Result<(Descriptors, Xpub)> {
     let secp = Secp256k1::new();
     let seed = sha256::Hash::hash(b"haystack-capture-demo");
@@ -251,6 +253,11 @@ fn sync_locked(app: &App, which: usize, p: &mut Profile, trigger: &str) -> anyho
     if p.open.is_none() {
         p.open = Some(wallet::open(&p.files, &world.descriptors)?);
     }
+    // Published before the network round, so the page shows the sync while it runs.
+    p.view["syncing"] = json!({
+        "since": now_unix(), "trigger": trigger, "expect_secs": p.view["last"]["secs"].clone(),
+    });
+    app.publish(which, &p.view);
     let (db, w) = p.open.as_mut().expect("opened above");
     let started = Instant::now();
     let result = wallet::sync(
@@ -267,6 +274,7 @@ fn sync_locked(app: &App, which: usize, p: &mut Profile, trigger: &str) -> anyho
     );
     let secs = started.elapsed().as_secs_f64();
     let name = if which == PLAIN { "plain" } else { "Haystack" };
+    p.view["syncing"] = Value::Null;
     let synced = match result {
         Ok(s) => s,
         Err(e) => {
@@ -302,7 +310,8 @@ fn sync_locked(app: &App, which: usize, p: &mut Profile, trigger: &str) -> anyho
 
     let score = score::score(&p.files.session, &app.train);
     let mut entry = last;
-    entry["score"] = score.clone();
+    // The grid's rows are for the latest sync only; the history table keeps the numbers.
+    entry["score"] = score::without_view(&score);
     p.view["score"] = score;
     p.view["scoring"] = json!(false);
     p.view["history"]
@@ -362,7 +371,7 @@ fn with_env<T>(app: &App, f: impl FnOnce(&TestEnv) -> anyhow::Result<T>) -> anyh
 }
 
 /// Someone pays the Haystack wallet's next unused receive address.
-fn pay(app: &App) -> anyhow::Result<()> {
+fn pay(app: &App) -> anyhow::Result<String> {
     let world = app.world()?;
     let mut p = app.profiles[HAYSTACK]
         .try_lock()
@@ -378,16 +387,15 @@ fn pay(app: &App) -> anyhow::Result<()> {
     with_env(app, |env| {
         let txid = env.send(&address, Amount::from_sat(400_000))?;
         wait_for_history(env, &spk, txid).map_err(|e| anyhow!("{e}"))?;
-        app.say(format!(
+        Ok(format!(
             "regtest: someone paid 0.004 BTC to external {} ({address}), unconfirmed",
             index.map_or("?".into(), |i| i.to_string())
-        ));
-        Ok(())
+        ))
     })
 }
 
 /// The Haystack wallet pays 0.01 BTC to the node, broadcast through bitcoind, not the sync server.
-fn send(app: &App) -> anyhow::Result<()> {
+fn send(app: &App) -> anyhow::Result<String> {
     let mut p = app.profiles[HAYSTACK]
         .try_lock()
         .map_err(|_| anyhow!("a sync is running; try again in a moment"))?;
@@ -405,15 +413,26 @@ fn send(app: &App) -> anyhow::Result<()> {
         let txid = wallet::send(w, to, Amount::from_sat(1_000_000), |tx| {
             Ok(env.bitcoind.client.send_raw_transaction(tx)?)
         })?;
-        app.say(format!(
+        Ok(format!(
             "regtest: the wallet sent 0.01 BTC to the node, broadcast through bitcoind: {txid}"
-        ));
-        Ok(())
+        ))
     })
 }
 
 /// A restore of the Haystack wallet from its descriptor, with or without the ledger file.
 fn restore(app: &App, keep_ledger: bool, padding: Option<u32>) -> anyhow::Result<()> {
+    // Checked before anything is deleted, so a refused restore leaves the wallet as it was.
+    let padding = match (keep_ledger, padding) {
+        (true, _) => None,
+        (false, None) => bail!("restoring without the ledger needs a dial setting"),
+        (false, Some(p)) if !PADDINGS.contains(&p) => {
+            bail!("padding must be one of {PADDINGS:?}")
+        }
+        (false, Some(p)) => Some(p),
+    };
+    if app.action.lock().unwrap()["running"] == true {
+        bail!("a regtest action is still running; try again in a moment");
+    }
     let mut p = app.profiles[HAYSTACK]
         .try_lock()
         .map_err(|_| anyhow!("a sync is running; try again in a moment"))?;
@@ -421,23 +440,29 @@ fn restore(app: &App, keep_ledger: bool, padding: Option<u32>) -> anyhow::Result
     for path in [&p.files.db, &p.files.cache] {
         let _ = std::fs::remove_file(path);
     }
-    if keep_ledger {
-        app.say("restore: the wallet database and cache were deleted; the descriptor and the ledger file are kept, so the next sync sends exactly the old query");
-    } else {
-        let padding =
-            padding.ok_or_else(|| anyhow!("restoring without the ledger needs a dial setting"))?;
-        let _ = std::fs::remove_file(&p.files.ledger);
-        p.padding = padding;
-        p.chain_share = 0.0;
-        app.say(format!(
-            "restore without the ledger, at padding {padding}: the old decoy counts and every chain decoy are gone, so any position whose count differs, and every chain decoy, changes on the wire"
-        ));
-    }
+    let message = match padding {
+        None => "restore: the wallet database and cache were deleted; the descriptor and the ledger file are kept, so the next sync sends exactly the old query".to_string(),
+        Some(padding) => {
+            let _ = std::fs::remove_file(&p.files.ledger);
+            p.padding = padding;
+            p.chain_share = 0.0;
+            format!(
+                "restore without the ledger, at padding {padding}: the old decoy counts and every chain decoy are gone, so any position whose count differs, and every chain decoy, changes on the wire"
+            )
+        }
+    };
     p.view["padding"] = json!(p.padding);
     p.view["chain_share"] = json!(p.chain_share);
-    p.view["balance"] = Value::Null;
+    // A restored wallet knows nothing until it syncs, so none of the old numbers stay up.
+    for key in ["balance", "txs", "utxos", "last", "score", "last_error", "syncing"] {
+        p.view[key] = Value::Null;
+    }
+    p.view["scoring"] = json!(false);
     p.view["ledger"] = json!(std::fs::read_to_string(&p.files.ledger).unwrap_or_default());
     app.publish(HAYSTACK, &p.view);
+    app.say(&message);
+    *app.action.lock().unwrap() =
+        json!({ "what": "restore", "running": false, "ok": true, "message": message, "at": now_unix() });
     Ok(())
 }
 
@@ -486,6 +511,7 @@ fn state(app: &App) -> Value {
         "paddings": PADDINGS,
         "chain_shares": if app.regtest { CHAIN_SHARES.to_vec() } else { vec![0.0] },
         "profiles": *app.views.lock().unwrap(),
+        "action": *app.action.lock().unwrap(),
         "log": app.log.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
     })
 }
@@ -511,6 +537,34 @@ fn spawn(
             app.say(format!("{what}: {e}"));
         }
     });
+}
+
+/// A regtest action run off the request thread, with its progress and result kept in `app.action`
+/// for the page. One at a time: a second press while one runs is refused straight away.
+fn spawn_action(
+    app: &Arc<App>,
+    what: &'static str,
+    doing: &'static str,
+    f: impl FnOnce(&App) -> anyhow::Result<String> + Send + 'static,
+) -> anyhow::Result<()> {
+    {
+        let mut action = app.action.lock().unwrap();
+        if action["running"] == true {
+            bail!("still busy: {}", action["message"].as_str().unwrap_or("another action"));
+        }
+        *action = json!({ "what": what, "running": true, "message": doing, "at": now_unix() });
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let (ok, message) = match f(&app) {
+            Ok(message) => (true, message),
+            Err(e) => (false, format!("{what} failed: {e}")),
+        };
+        app.say(&message);
+        *app.action.lock().unwrap() =
+            json!({ "what": what, "running": false, "ok": ok, "message": message, "at": now_unix() });
+    });
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -550,6 +604,7 @@ fn main() -> anyhow::Result<()> {
         profiles: [it.next().expect("two"), it.next().expect("two")],
         views: Mutex::new(views),
         log: Mutex::new(VecDeque::new()),
+        action: Mutex::new(Value::Null),
         pins: PinFile::new(a.data.join("pins.json")),
         train: a.train.clone(),
         mean: a.mean,
@@ -639,8 +694,14 @@ fn main() -> anyhow::Result<()> {
                         } else {
                             HAYSTACK
                         };
-                        spawn(&app, "manual sync", move |app| sync(app, which, "manual"));
-                        Ok(())
+                        // Refused here, not only in the log, while the published view says it's busy.
+                        let view = app.views.lock().unwrap()[which].clone();
+                        if !view["syncing"].is_null() || view["scoring"] == true {
+                            Err(anyhow!("a sync of this wallet is already running"))
+                        } else {
+                            spawn(&app, "manual sync", move |app| sync(app, which, "manual"));
+                            Ok(())
+                        }
                     }
                     "/api/dial" => set_dial(
                         &app,
@@ -648,20 +709,14 @@ fn main() -> anyhow::Result<()> {
                         input["chain_share"].as_f64().unwrap_or(0.0),
                     ),
                     "/api/pay" => {
-                        spawn(&app, "pay", pay);
-                        Ok(())
+                        spawn_action(&app, "pay", "someone is paying the wallet 0.004 BTC…", pay)
                     }
-                    "/api/mine" => {
-                        spawn(&app, "mine", |app| {
-                            with_env(app, |env| mine(env, 1).map_err(|e| anyhow!("{e}")))?;
-                            app.say("regtest: mined one block");
-                            Ok(())
-                        });
-                        Ok(())
-                    }
+                    "/api/mine" => spawn_action(&app, "mine", "mining a block…", |app| {
+                        with_env(app, |env| mine(env, 1).map_err(|e| anyhow!("{e}")))?;
+                        Ok("regtest: mined one block".into())
+                    }),
                     "/api/send" => {
-                        spawn(&app, "send", send);
-                        Ok(())
+                        spawn_action(&app, "send", "the wallet is sending 0.01 BTC…", send)
                     }
                     "/api/restore" => restore(
                         &app,
@@ -689,4 +744,24 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `capture/` derives the same public-seed wallet in its own code, and the committed fixtures
+    /// were scanned with it. If the two ever drift, the demo's honeypot runs stop matching them.
+    #[test]
+    fn demo_wallet_is_the_one_capture_scans() {
+        let path = score::repo_root().join("tests/fixtures/bdk-capture-truth.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let (d, _) = capture_wallet().unwrap();
+        for (ours, key) in [(&d.external, "external_descriptor"), (&d.internal, "internal_descriptor")] {
+            let theirs = fixture[key].as_str().unwrap();
+            // The fixture's descriptors carry a `#checksum` suffix; ours are bare.
+            assert_eq!(theirs.split('#').next().unwrap(), ours, "{key}");
+        }
+    }
 }

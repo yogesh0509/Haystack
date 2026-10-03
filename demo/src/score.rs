@@ -50,6 +50,7 @@ fn run(session: &Path, tier: &str, train: &[PathBuf]) -> Value {
             "score",
             "--last",
             "--json",
+            "--view",
             "--tier",
             tier,
             "--session",
@@ -100,18 +101,45 @@ pub fn score(session: &Path, train_root: &Path) -> Value {
                 })
                 .unwrap_or_default();
             train.sort();
+            let command = format!(
+                "cargo run --release -p haystack-regtest --bin sessions -- --out {}",
+                train_root.display()
+            );
             if train.is_empty() {
-                json!({ "unavailable": format!(
-                    "no training set at {}; generate one with `cargo run --release -p haystack-regtest --bin sessions -- --out {}`",
-                    dir.display(), train_root.display()) })
+                json!({
+                    "unavailable": format!(
+                        "Not scored: the training set for this setting isn't built (nothing in {}). Building it takes about 15 minutes:",
+                        dir.display()),
+                    "command": command,
+                })
             } else {
-                run(session, "T2", &train)
+                let t2 = run(session, "T2", &train);
+                match t2["unavailable"].as_str() {
+                    // `fit` refuses, for example, sessions recorded by another build of the client.
+                    Some(reason) if reason.starts_with("refused:") => json!({
+                        "unavailable": "Not scored: the trained attacker refused its training set. The usual cause is a set recorded by an older build of the client; rebuilding it takes about 15 minutes:",
+                        "command": command,
+                        "detail": reason,
+                    }),
+                    _ => t2,
+                }
             }
         }
-        [] => json!({ "unavailable": "no session yet" }),
+        [] => json!({ "unavailable": "Not scored: no sync yet." }),
         _ => {
-            json!({ "unavailable": "this session mixes dial settings, and the training set has one setting per folder" })
+            json!({ "unavailable": "Not scored: this session used two dial settings, and the trained attacker knows one. Restart the demo to score a new setting from the first sync." })
         }
     };
     json!({ "T1": t1, "T2": t2 })
+}
+
+/// The same score without the grid's per-scripthash rows, for the history table.
+pub fn without_view(score: &Value) -> Value {
+    let mut score = score.clone();
+    for tier in ["T1", "T2"] {
+        if let Some(t) = score.get_mut(tier).and_then(Value::as_object_mut) {
+            t.remove("view");
+        }
+    }
+    score
 }

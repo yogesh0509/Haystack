@@ -6,8 +6,8 @@ The outputs below are real, from actual runs.
 
 Two kinds of wallet appear:
 
-- **The never-paid demo wallet** comes from `capture/`. Its seed is a public string, so anyone can
-  reproduce it. Nobody may ever send it funds.
+- **The never-paid demo wallet** has a public string as its seed (`capture/` and `haystack-demo`
+  derive the same one), so anyone can reproduce it. Nobody may ever send it funds.
 - **The paid regtest wallet** comes from `regtest/`. It lives on a private local chain (regtest),
   where blocks are mined on demand and coins are worthless. It receives, reuses an address, spends
   with change, and has unconfirmed transactions. Its first sync through Haystack is exactly a
@@ -29,7 +29,7 @@ definitions.
 
 ```bash
 mkdir -p out
-cargo build --release -p haystack-capture -p haystack-regtest
+cargo build --release -p haystack-capture -p haystack-demo -p haystack-regtest
 ```
 
 ## Case 1: plain Electrum gives the wallet away
@@ -81,11 +81,16 @@ address, the same decoys every sync.
 ```bash
 # terminal 1
 python3 scripts/honeypot_electrum.py --log out/padded-honeypot.json
-# terminal 2
-./target/release/haystack-capture --url tcp://127.0.0.1:50001 --rounds 3 --padding 10 \
-    --out out/padded-truth.json --session out/padded-session.jsonl
+# terminal 2: the demo wallet, pointed at the honeypot, keeping its files in out/padded-demo
+./target/release/haystack-demo --url tcp://127.0.0.1:50001 --data out/padded-demo
+# terminal 3, or the "Sync now" button at http://127.0.0.1:7878: three syncs of the Haystack wallet
+for i in 1 2 3; do
+  curl -s -X POST -H 'X-Haystack-Demo: 1' -d '{"profile":"haystack"}' http://127.0.0.1:7878/api/sync
+  sleep 25
+done
 # terminal 1: Ctrl-C, then:
-python3 -m attack score --session out/padded-session.jsonl --honeypot out/padded-honeypot.json --tier T1
+python3 -m attack score --session out/padded-demo/tcp___127.0.0.1_50001/haystack/session.jsonl \
+    --honeypot out/padded-honeypot.json --tier T1
 ```
 
 **What you should see.** The honeypot receives 3,000 queries for 1,000 distinct scripthashes. The
@@ -275,15 +280,14 @@ default paddings 1, 2, 5, 10 and 20 and chain shares 0, 10% and 30%) takes about
 
 **What it shows.** The never-paid wallet padded against a public server instead of the honeypot.
 This sends the demo wallet's padded query to a third party, so it is opt-in. It was last run in
-Week 2 (`docs/04-roadmap.md`) and not re-run for this walkthrough. A self-signed server such as
-`fortress.qtornado.com` needs the demo wallet's certificate policy instead, which pins the
-certificate on first use: `cargo run --release -p haystack-demo -- --url
-ssl://fortress.qtornado.com:50002`, then press Sync on `http://127.0.0.1:7878` (Week 4).
+Week 2 (`docs/04-roadmap.md`) and not re-run for this walkthrough. The demo pins a server's
+certificate on first use, which a self-signed server such as `fortress.qtornado.com` needs. Press
+Sync now on the Wallet tab of `http://127.0.0.1:7878`; the Lab tab shows the score and what the
+server received.
 
 ```bash
-./target/release/haystack-capture --url ssl://electrum.blockstream.info:50002 --rounds 1 \
-    --padding 10 --out out/public-truth.json --session out/public-session.jsonl
-python3 -m attack score --session out/public-session.jsonl --tier T1
+cargo run --release -p haystack-demo -- --url ssl://fortress.qtornado.com:50002
+python3 -m attack score --session out/demo/ssl___fortress.qtornado.com_50002/haystack/session.jsonl --tier T1
 ```
 
 ## What no case here covers

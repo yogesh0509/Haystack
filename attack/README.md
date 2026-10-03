@@ -1,4 +1,4 @@
-# attack/
+# attack
 
 This module is the attacker. It reads a log of the Electrum queries a wallet made, possibly across several rounds, and tries to guess which queries were for the wallet's real addresses and which were decoys. For each queried scripthash (the hashed form of an address that Electrum uses as its lookup key) it outputs a probability that the scripthash is real, then compares those guesses against the actual truth to see how good the attacker was. Every privacy number reported elsewhere in the project is computed from this comparison.
 
@@ -78,7 +78,7 @@ python3 -m attack score --session tests/fixtures/haystack-session.jsonl \
                         --honeypot tests/fixtures/haystack-honeypot-log.json --tier T1
 ```
 
-Score a plain Electrum sync, from the honeypot's log and `capture/`'s record of what the wallet sent:
+Score a plain Electrum sync, from the honeypot's log and `capture/`'s record of what the stock wallet sent:
 
 ```bash
 python3 -m attack score --honeypot tests/fixtures/bdk-honeypot-log.json \
@@ -96,6 +96,14 @@ Score one of those sessions with the structural attacker, trained on the other w
 
 ```bash
 python3 -m attack score --session regtest/sessions/p10-c0/demo.jsonl --train regtest/sessions/p10-c0 --tier T2
+```
+
+The demo wallet scores only the latest sync, as one JSON line. `--view` adds the attacker's
+probability for every scripthash, in the order the server received them, which the demo draws as its
+"What the server sees" grid:
+
+```bash
+python3 -m attack score --session tests/fixtures/haystack-session.jsonl --tier T1 --last --json --view
 ```
 
 Print privacy against bandwidth at every padding level:

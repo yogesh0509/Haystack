@@ -303,3 +303,30 @@ Planned once all four weeks' items are done and tested:
 - **Electrum's subscribe mechanism, as a stretch goal.** It changes how updates arrive, not what the
   server learns up front, and a decoy never gets a notification of its own, so the client would
   have to fake follow-up traffic per decoy (`docs/02-design.md`, "Sync scheduling").
+- **Protocol compatibility.** Test against a server that offers only Electrum protocol 1.7, which
+  replaces the scripthash lookup methods with scriptpubkey ones; `electrum-client` 0.24.1 still calls
+  the old methods (`docs/05-prior-art.md`).
+- **Attacks borrowed from decoy schemes that failed elsewhere** (`docs/05-prior-art.md`, "Lessons
+  from decoy schemes that failed elsewhere"): a generic machine-learning classifier as a baseline
+  attacker, a whole-wallet score over linked addresses and balance, an age/activity test for chain
+  decoys, and a check for decoys that trip the server's error for an overly busy address.
+- **Decoy sampling that matches real wallets, not just exists on chain.** Draw chain decoys from the
+  age and activity distribution real wallets show, or bin them with a real position by block height,
+  following Möser et al.'s fix for the same problem in Monero (`docs/05-prior-art.md`).
+- **Server request limits as a bandwidth ceiling, not just a byte count.** ElectrumX prices each
+  scripthash lookup at about 1.0 and throttles a session once its total cost passes 1,000 by default;
+  one padding-10 sync of the demo wallet (1,330 lookups) already passes that point, and a padding-20
+  sync of a 400-address wallet (8,000) approaches its 10,000 disconnect point. Fulcrum caps a
+  JSON-RPC batch at 345 requests, above the demo's current 100. Needs measuring against a real
+  server, not assumed.
+- **A longer-term PIR replacement**, once it covers address history and not only the UTXO set
+  (`docs/05-prior-art.md`, "The academically correct answer").
+- **Product patterns for a wallet built on Haystack**, from the Bitcoin Design Guide review: private
+  by default before the first sync, since the first sync can't be taken back; an always-visible
+  connection badge like Sparrow's; the dial under Settings → Network, matching where the guide puts
+  other server choices; a private restore that ships the ledger file with the descriptor; and the
+  receive and activity screens this demo leaves out.
+- **Paths to wallets people use.** Any BDK wallet directly (`haystack-electrum` matches
+  `bdk_electrum`'s `full_scan` signature); mobile through BDK's Kotlin/Swift bindings and example
+  apps; an Electrum desktop plugin, which needs a Python port of decoy derivation and a subscription
+  design.

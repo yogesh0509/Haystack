@@ -68,8 +68,9 @@ index on each keychain, and the chain tip. The test also checks the session log.
 stages the planner should take, a transaction count above zero for exactly the used real addresses,
 and none for any decoy.
 
-This is the only test of confirmed transactions. Making Haystack drop every confirmation anchor
-leaves all 43 in-memory tests passing, and fails this one at round 1.
+This is the only test of confirmed transactions. When this was checked, making Haystack drop every
+confirmation anchor left all 43 in-memory tests of the time passing, and failed this one at round 1.
+`haystack-electrum` has 70 in-memory tests now; the check has not been repeated against them.
 
 ## Mempool evictions (`tests/eviction.rs`)
 

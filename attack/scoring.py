@@ -137,6 +137,20 @@ def score(post, latest_round, real):
     )
 
 
+def view(post, latest_round, real):
+    """The server's-eye picture of one round, for the demo wallet's grid.
+
+    One row per scripthash in the order the server received them: the attacker's probability that it
+    is real, then 1/0 for whether it is, then 1/0 for whether the server reported history for it.
+    """
+    real = frozenset(real)
+    rows = []
+    for s in latest_round.order:
+        f = latest_round.facts.get(s)
+        rows.append([round(post.marginal[s], 3), int(s in real), int(f is not None and f.tx_count > 0)])
+    return rows
+
+
 # Running a level and scoring it, per round.
 
 def run(obs, real, tier="T1", model=None, activation=True):

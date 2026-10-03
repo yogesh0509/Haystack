@@ -1,101 +1,61 @@
-# capture/
+# capture
 
-A small Rust binary (`haystack-capture`) that runs real `bdk_wallet` full scans against an Electrum
-endpoint and writes down exactly what the wallet itself asked for. It exists to produce **ground
-truth** for `attack/`: a record, independent of anything a server logs, of which scripthashes are
-actually the wallet's own.
+A small Rust binary (`haystack-capture`) that runs stock `bdk_wallet` 2.1.0 and `bdk_electrum` 0.23.2
+full scans against an Electrum server and writes down which scripthashes the wallet itself says it
+queried. It links no Haystack code. Its one job is the unpadded baseline: the answer key that shows
+what a server really learns from an ordinary wallet, recorded from the wallet's side rather than the
+server's.
 
-**By default this tool does not pad anything.** At `--padding 1` it sends a plain, unmodified
-`bdk_electrum` full scan — no decoys, no query crafting. At `--padding N` above 1 it sends the same
-scan through `haystack-electrum` instead, carrying the decoy ledger from round to round the way a
-wallet would keep it, and also records which decoys the ledger says it sent.
+A scripthash is the hashed form of an address that Electrum uses as its lookup key (SHA-256 of the
+script pubkey, bytes reversed, the same as `scripts/scripthash.py`).
 
-## What it produces
+## What it records
 
-For each round, it creates a fresh, unsynced, in-memory wallet from a BIP84 (native segwit)
-descriptor pair and calls `wallet.start_full_scan()`, with an `inspect` callback recording every
-`(keychain, index, script pubkey)` the wallet queries — this is the wallet's own account of what it
-sent, not a copy of what any server saw. Output is one JSON file:
+Each round creates a fresh, in-memory wallet from a public BIP84 descriptor pair and runs
+`wallet.start_full_scan()` on its own connection. An `inspect` callback, which bdk calls for every
+address it is about to query, collects each `(keychain, index, scripthash)`. The output is one JSON
+file:
 
 ```json
-{
-  "format": "haystack-capture/1",
-  "network": "bitcoin",
-  "external_descriptor": "wpkh([.../84'/0'/0']xpub.../0/*)",
-  "internal_descriptor": "wpkh([.../84'/0'/0']xpub.../1/*)",
-  "stop_gap": 50,
-  "batch_size": 5,
-  "padding": 1,
-  "rounds": [
-    {"round": 0, "queried": [{"keychain": "external", "index": 0, "scripthash": "..."}, ...],
-     "decoys": []}
-  ]
-}
+{"format": "haystack-capture/1", "network": "bitcoin",
+ "external_descriptor": "wpkh([.../84'/0'/0']xpub.../0/*)#...",
+ "internal_descriptor": "wpkh([.../84'/0'/0']xpub.../1/*)#...",
+ "stop_gap": 50, "batch_size": 5,
+ "rounds": [{"round": 0, "queried": [{"keychain": "external", "index": 0, "scripthash": "..."}]}]}
 ```
 
-`queried` is always the wallet's real scripthashes only, so `attack/observe.py`'s `load_capture()`
-reads a padded run as the ground truth for a padded honeypot log, unchanged: anything the server
-logged that isn't in `queried` is a decoy. `decoys` lists the scripthashes the ledger says were sent
-alongside them (empty at padding 1), so a honeypot log can be checked against the ledger exactly.
-`padding` and `decoys` were added later; the committed plain fixture predates them, and
-`load_capture()` ignores both.
+Pointed at `scripts/honeypot_electrum.py`, which logs what the server received, the two files can be
+compared: `attack/observe.py`'s `check_plain()` requires the server's log to equal the wallet's own
+record, and the attacker then reads 0.00 bits. `tests/test_plain_capture.py` does this on committed
+fixtures, and running `capture/` again reproduces `tests/fixtures/bdk-capture-truth.json` exactly.
 
-Each round's `scripthash` is computed the same way `scripts/scripthash.py` computes it (SHA-256 of
-the script pubkey, bytes reversed), so a query set here is directly comparable to a honeypot log
-loaded by `attack/observe.py`'s `load_capture()`.
-
-## Building and running
+## Run it
 
 ```bash
-cargo build --release -p haystack-capture     # from the repo root; the binary is target/release/
+cargo build --release -p haystack-capture          # from the repo root
 
-# terminal 1: the fake server that logs every query it receives
-python3 scripts/honeypot_electrum.py
-
-# terminal 2: point the capture tool at it — plain, then padded
-./target/release/haystack-capture --url tcp://127.0.0.1:50001 --rounds 6 \
-    --out capture/capture-truth.json
-./target/release/haystack-capture --url tcp://127.0.0.1:50001 --rounds 6 --padding 10 \
-    --out capture/haystack-truth.json --session capture/haystack-session.jsonl
+python3 scripts/honeypot_electrum.py                # terminal 1; Ctrl-C when the scan is done
+./target/release/haystack-capture --rounds 6 --out capture-truth.json   # terminal 2
+python3 -m attack score --honeypot honeypot-log.json --capture capture-truth.json --tier T1
 ```
 
-The honeypot writes one log for everything it received; run a fresh honeypot per capture so each log
-holds one session. Score a padded session from its session log, checked first against what the
-server received:
-`python3 -m attack score --session capture/haystack-session.jsonl --honeypot honeypot-log.json`.
+Start a fresh honeypot for each capture. It numbers connections from 1 and `attack` pairs the honeypot's
+connection *n* with capture's round *n*, so a honeypot that already served an earlier run misaligns them.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--url` | `tcp://127.0.0.1:50001` | The Electrum endpoint to scan against — the honeypot by default. |
-| `--stop-gap` | `50` | Consecutive unused positions before a keychain is considered exhausted. A never-paid wallet queries `2 × stop_gap` scripthashes per round. |
-| `--batch-size` | `5` | Real addresses' worth per socket write, the 5 `bdk_wallet`'s own example uses. Each write carries `batch_size × padding` scripts, decoys included: 5 for a plain scan and 50 at padding 10. The output's `batch_size` field records the scripts per write. |
-| `--session` | none | Also write the client's session log (`haystack-session/1`, see `haystack-electrum/src/session.rs`) to this path, replacing any old file. Needs `--padding` above 1. |
-| `--padding` | `1` | Scripts queried per real address. `1` is plain `bdk_electrum`; above 1 the scan goes through `haystack-electrum` with `padding − 1` decoys per position. |
-| `--rounds` | `1` | How many independent full scans to run. Each round creates a brand-new wallet, so consecutive rounds are not a growing session — see the caveat below. |
-| `--seed` | `haystack-capture-demo` | A public string, SHA-256'd into a BIP32 master key. Not a real wallet seed phrase — deliberately public, so anyone can reproduce the same descriptors and the same numbers. |
-| `--out` | `capture-truth.json` | Where the ground-truth JSON is written. |
+| `--url` | `tcp://127.0.0.1:50001` | The Electrum server to scan against. |
+| `--rounds` | `1` | How many scans to run. Each round starts a brand-new wallet, so six rounds are six copies of the same never-paid, 100-scripthash scan, not a wallet receiving payments over time. |
+| `--stop-gap` | `50` | Consecutive unused positions before a keychain counts as exhausted. A never-paid wallet queries `2 × stop_gap` scripthashes per round. |
+| `--batch-size` | `5` | Addresses per socket write, the value `bdk_wallet`'s own Electrum example uses. |
+| `--seed` | `haystack-capture-demo` | A public string, SHA-256'd into a BIP32 master key. The demo wallet in `demo/` derives the same one, and a test there checks that the two agree. |
+| `--out` | `capture-truth.json` | Where the JSON is written. |
 
-**Never send funds to the demo seed.** Because `--seed` is a plain public string, anyone can derive
-its private key. It exists only to make this tool's output reproducible by a third party.
+**Never send funds to the demo seed.** Anyone can derive its private key.
 
-**Rounds are independent scans, not a growing session.** Each round starts a fresh `Wallet`, so
-`--rounds 6` produces six copies of the same never-paid, 100-scripthash scan — useful for exercising
-`attack/`'s many-rounds logic against something a real server actually sent, but it does not simulate
-a wallet receiving payments over time (`regtest/`'s session generator does that, on a real chain).
+## What it does not do
 
-## The committed fixture
-
-`tests/fixtures/bdk-capture-truth.json` and `tests/fixtures/bdk-honeypot-log.json` are exactly the two
-files this pipeline produces: `capture/` writes the first, `scripts/honeypot_electrum.py` writes the
-second, from the same six rounds, at the same time. Both are committed so the plain-capture test
-(`tests/test_plain_capture.py`) is reproducible without a live wallet — see `tests/README.md`.
-
-## Which `bdk_wallet` version, and why
-
-This crate targets `bdk_wallet` **2.1.0**, pinned in `Cargo.toml` and resolved in the workspace's root
-`Cargo.lock`, shared with `haystack-electrum` (along
-with `bdk_electrum` 0.23.2, `bdk_chain` 0.23.3, `bdk_core` 0.6.3, `electrum-client` 0.24.1) — the
-published, stable release from crates.io, not the local `~/bdk_wallet` fork (version 3.1.0), which
-exists only in that checkout. `docs/02-design.md`, "Which upstream version to copy," has the full
-reasoning, including why `haystack-electrum` has to resolve the same `bdk_core`
-minor version this one does.
+It does not run padded syncs. A padded sync's ground truth is the client's own session log
+(`haystack-session/1`, written by `haystack-electrum` and by `demo/`), which `python3 -m attack
+score --session … --honeypot …` checks against what the honeypot received. `docs/07-walkthrough.md`
+case 3 shows it.

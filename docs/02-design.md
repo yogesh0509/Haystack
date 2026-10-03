@@ -303,7 +303,7 @@ built, so padding has to live inside the box.
   Attaching decoys to positions and making every sync a full scan means nothing ever leaves the
   query. The harness rule "anything that goes missing is a decoy" (`attack/a1_many_rounds.py`) then stays sound.
   The cost is the tail on every sync: 100 positions, which is 1,000 scripthashes at padding 10 with
-  `capture/`'s gap limit of 50, even for a wallet that has never been paid.
+  bdk's gap limit of 50 (the one `capture/` uses), even for a wallet that has never been paid.
 - **A decoy with history gets the same follow-up calls as a real one:** the transaction fetch and the
   merkle proof. A scripthash that has history but whose transactions are never read doesn't look like
   an owned address. So padding's bandwidth grows with how much history the decoys have, not only with
@@ -351,7 +351,7 @@ built, so padding has to live inside the box.
 ### Which upstream version to copy
 
 - **The crate targets `bdk_wallet` 2.1.0 from crates.io.** It uses the same set
-  `capture/Cargo.lock` resolves: `bdk_electrum` 0.23.2, `bdk_chain` 0.23.3, `bdk_core` 0.6.3 and
+  the workspace's `Cargo.lock` resolves: `bdk_electrum` 0.23.2, `bdk_chain` 0.23.3, `bdk_core` 0.6.3 and
   `electrum-client` 0.24.1. That toolchain produced the fixtures in `tests/fixtures/`. The local
   `~/bdk_wallet` is a personal fork at 3.1.0 that exists only in that checkout. It is read, never
   built against.
@@ -487,16 +487,17 @@ The server is the only part on the far side of the trust boundary. It receives e
 (`docs/01-threat-model.md`), because it can already show any client a false balance.
 
 The measurement path exists today in three forms (updated). For plain syncs,
-`capture/` runs real `bdk_wallet` full scans against the honeypot and records what the wallet itself
-sent, which is the ground truth; `scripts/honeypot_electrum.py` records what arrived at the server,
+`capture/` runs stock `bdk_wallet` and `bdk_electrum` full scans against the honeypot, with no Haystack
+code linked, and records what the wallet itself sent, which is the ground truth; `scripts/honeypot_electrum.py` records what arrived at the server,
 which is the adversary's view; and `tests/test_plain_capture.py` checks the two against each other
-on the committed fixtures, and that plain Electrum reads 0.00 bits on them. For padded syncs, `capture/ --padding
-10 --session …` does the same through `haystack-electrum` and also writes the session log. For a
+on the committed fixtures, and that plain Electrum reads 0.00 bits on them. For padded syncs, the
+client's own session log is the ground truth, and `score --session --honeypot` checks it against what
+the honeypot received (`haystack-demo --url tcp://127.0.0.1:50001` writes one). For a
 paid wallet, which neither the honeypot nor the public demo seed can ever be, `regtest/` runs
 `bitcoind` and `electrs` on a local regtest chain and gives a wallet a real history (receives,
 address reuse, a batched payout, a two-input spend with change, unconfirmed transactions, a
 reorganisation); `regtest/tests/gate.rs` requires padded and plain scans of it to leave the wallet
-identical. `capture/README.md` and `attack/README.md` have the exact commands and the
+identical. `docs/07-walkthrough.md` and `attack/README.md` have the exact commands and the
 current numbers — this stays here only as a pointer, so the five-step product path above has
 something real to contrast against.
 
