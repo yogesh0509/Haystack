@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haystack demo wallet</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --ink: #1d2330; --muted: #5d6677; --line: #dde1e8;
+  --accent: #2f6fde; --good: #1f8a4c; --bad: #c2412d; --warn: #9a6a00; --chip: #eef1f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #12151b; --card: #1b2029; --ink: #e6e9ef; --muted: #9aa3b2; --line: #2c3340;
+          --accent: #6d9cf0; --good: #4cc27f; --bad: #f07a66; --warn: #e0b04a; --chip: #252c38; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+       font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 0 0 10px; }
+h3 { font-size: 14px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+p { margin: 6px 0; }
+.sub { color: var(--muted); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.wide { grid-column: 1 / -1; }
+.big { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.row { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; }
+.stat { min-width: 120px; }
+.stat .label { color: var(--muted); font-size: 13px; }
+.stat .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+button { font: inherit; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--accent);
+         background: var(--accent); color: #fff; cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+select { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line);
+         background: var(--card); color: var(--ink); }
+.chip { display: inline-block; background: var(--chip); border-radius: 99px; padding: 2px 10px; font-size: 13px; }
+.note { font-size: 13px; color: var(--muted); }
+.box { border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--chip); border-radius: 0 6px 6px 0; font-size: 14px; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 600; }
+.scroll { overflow-x: auto; }
+pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: var(--chip);
+      padding: 8px; border-radius: 6px; margin: 6px 0; }
+#log { max-height: 260px; overflow-y: auto; font: 12px/1.45 ui-monospace, monospace; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Haystack demo wallet</h1>
+  <p class="sub" id="where">Starting…</p>
+  <p class="sub">Two copies of one wallet sync against the same server. <b>Plain</b> sends exactly the
+  wallet's addresses, as every Electrum wallet does today. <b>Haystack</b> hides them among decoys.
+  After every sync, the repository's own attacker reads that copy's session log and tries to pick out
+  the real addresses.</p>
+
+  <div class="grid">
+    <section class="card" id="card-plain"></section>
+    <section class="card" id="card-haystack"></section>
+
+    <section class="card wide">
+      <h2>How to read the score</h2>
+      <p><b>Precision</b> is the share of the attacker's best guesses that really are the wallet's.
+      The headline turns it into bits: <b>0.00 bits</b> means every guess was right, which is what
+      plain Electrum gives, and <b>log<sub>2</sub>(padding)</b>, for example 3.32 bits at padding
+      10, means the guesses were no better than random.</p>
+      <p><b>Funded</b> is the same precision restricted to the addresses that have transaction
+      history. They hold the balance, and the headline can hide them, because the unused addresses
+      outnumber them.</p>
+      <div class="box"><b>What the attacker is assumed to know.</b> It sees every scripthash this
+      wallet sends, in order, on every sync, and knows how the wallet software behaves. The score
+      covers only the attacks in this repository: <i>comparing syncs</i> (T1) and, when a training
+      set is present, <i>a structural model trained on other wallets' sessions</i> (T2). An attack
+      nobody wrote does not show up in the number. Not modelled: linking addresses through shared
+      transactions on chain, sync timing, and which transactions the client fetches.</div>
+      <div class="box" id="chain-caveat" hidden><b>Chain decoys.</b> Decoys taken from the chain
+      are found by asking <i>this same server</i> about random transactions. A server that reads its
+      own log of those lookups can cross off every chain decoy, which puts the funded addresses back
+      where the no-history decoys leave them. That attack is described in
+      <code>docs/02-design.md</code> and not built, so the score with chain decoys holds only against
+      a server that ignores its own log.</div>
+    </section>
+
+    <section class="card" id="regtest-card" hidden>
+      <h2>The regtest chain</h2>
+      <p class="note">A private chain where blocks are mined on demand and coins are worthless.</p>
+      <div class="actions">
+        <button onclick="act('/api/pay')">Someone pays the wallet 0.004 BTC</button>
+        <button onclick="act('/api/mine')" class="ghost">Mine a block</button>
+        <button onclick="act('/api/send')" class="ghost">Wallet sends 0.01 BTC</button>
+      </div>
+      <p class="note">A payment lands on the next unused address. An address that goes from no
+      history to some while being watched must be real, because nobody pays a decoy, so the next
+      sync exposes it. The wallet's own payments are broadcast through bitcoind, not the sync
+      server, so the server can't tie them to this wallet's sessions.</p>
+    </section>
+
+    <section class="card" id="restore-card">
+      <h2>Restore</h2>
+      <p>To restore this wallet you need two things: the descriptor, which derives every address, and
+      the ledger file, which records how many decoys each position was given the first time it was
+      queried. The decoys themselves are rebuilt from the descriptor; the counts are not.</p>
+      <h3>Descriptor (receive)</h3><pre id="desc">–</pre>
+      <h3>Ledger file</h3><pre id="ledger">no sync yet</pre>
+      <div class="actions">
+        <button onclick="restore(true)">Restore with the ledger</button>
+        <button onclick="restore(false)" class="ghost">Restore without the ledger…</button>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <h2>Sync history</h2>
+      <div class="scroll" id="history"></div>
+    </section>
+
+    <section class="card wide">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+</main>
+<script>
+let S = null;
+
+const fmtBtc = sats => sats == null ? '–' : (sats / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' BTC';
+const kib = n => (n / 1024).toFixed(1) + ' KiB';
+const ago = t => { const s = Math.max(0, Date.now() / 1000 - t); return s < 60 ? Math.round(s) + ' s ago' : Math.round(s / 60) + ' min ago'; };
+const pct = x => x == null ? '–' : (100 * x).toFixed(1) + '%';
+const bits = x => x == null ? '–' : x.toFixed(2);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'X-Haystack-Demo': '1' }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) alert(j.error || 'failed');
+  refresh();
+}
+const act = path => post(path);
+
+function scoreBlock(score, scoring) {
+  if (!score) return `<p class="note">${scoring ? 'Attacking this session…' : 'Not scored yet: sync first.'}</p>`;
+  const tier = (s, name, what) => {
+    if (!s || s.unavailable) return `<div class="stat"><div class="label">${name}: ${what}</div><div class="note">${esc(s ? s.unavailable : '–')}</div></div>`;
+    const ceiling = Math.log2(s.n_query / s.n_real);
+    const cls = s.precision_bits < 0.05 ? 'bad' : (s.precision_bits > ceiling - 0.3 ? 'good' : 'warn');
+    const funded = s.funded_precision == null
+      ? '<span class="note">no address has history</span>'
+      : `<span class="${s.funded_precision > 0.99 ? 'bad' : ''}">${pct(s.funded_precision)}</span> <span class="note">vs ${pct(s.funded_chance)} chance, ${bits(s.funded_bits)} bits</span>`;
+    return `<div class="stat"><div class="label">${name}: ${what}</div>
+      <div class="big ${cls}">${bits(s.precision_bits)} <span style="font-size:15px">bits</span></div>
+      <div class="note">precision ${pct(s.precision)} vs ${pct(s.chance)} chance · ceiling ${ceiling.toFixed(2)} bits</div>
+      <div>Funded: ${funded}</div></div>`;
+  };
+  return `<div class="row">${tier(score.T1, 'T1', 'compares every sync')}${tier(score.T2, 'T2', 'also learned what real wallets look like')}</div>
+    ${scoring ? '<p class="note">Re-scoring…</p>' : ''}`;
+}
+
+function card(p, other) {
+  const plain = p.name === 'plain';
+  const last = p.last;
+  const local = S.local;
+  const dial = plain ? '' : `
+    <h3>Privacy dial</h3>
+    <div class="row">
+      <label>Padding <select id="pad">${S.paddings.map(x => `<option ${x === p.padding ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+      <label>Chain decoys <select id="share">${S.chain_shares.map(x => `<option value="${x}" ${Math.abs(x - p.chain_share) < 1e-9 ? 'selected' : ''}>${Math.round(x * 100)}%</option>`).join('')}</select></label>
+      <button class="ghost" onclick="setDial()">Apply</button>
+    </div>
+    <p class="note">Padding ${p.padding} sends ${p.padding} scripthashes per real one: ${p.padding - 1} decoys each. The steps are the settings the structural attacker is trained at.</p>`;
+  const bw = (last && other && other.last && other.last.sent + other.last.received > 0 && !plain)
+    ? ` · <b>${((last.sent + last.received) / (other.last.sent + other.last.received)).toFixed(1)}×</b> the plain sync's bytes` : '';
+  const auto = plain ? '<p class="note">Manual only: this copy is the contrast.</p>' : `
+    <p class="note">Automatic sync: an exponential delay with a mean of ${S.mean_minutes.toFixed(1)} min
+    ${Math.abs(S.mean_minutes - S.default_mean_minutes) > 1e-6 ? `<b>(demo speed; the product default is ${S.default_mean_minutes} min)</b>` : '(the product default)'}.
+    ${S.next_auto_secs != null ? `Next one in about ${Math.round(S.next_auto_secs)} s.` : ''}
+    It never fires because you opened the app or got paid; a sync that came due while the app couldn't run is skipped and redrawn.</p>`;
+  return `
+    <h2>${plain ? 'Plain Electrum' : 'Haystack'} <span class="chip">padding ${plain ? 1 : p.padding}${!plain && p.chain_share > 0 ? ` · ${Math.round(p.chain_share * 100)}% chain decoys` : ''}</span></h2>
+    <div class="row">
+      <div class="stat"><div class="label">Balance</div><div class="value">${p.balance ? fmtBtc(p.balance.total) : '–'}</div>
+        ${p.balance && (p.balance.trusted_pending + p.balance.untrusted_pending) ? `<div class="note">${fmtBtc(p.balance.trusted_pending + p.balance.untrusted_pending)} unconfirmed</div>` : ''}</div>
+      <div class="stat"><div class="label">Transactions</div><div class="value">${p.txs ?? '–'}</div></div>
+      <div class="stat"><div class="label">Last sync</div><div class="value">${last ? kib(last.sent + last.received) : '–'}</div>
+        <div class="note">${last ? `${last.queries} scripthashes (${last.reals} real), ${last.secs.toFixed(1)} s, ${last.trigger}, ${ago(last.at)}${bw}` : 'none yet'}</div></div>
+    </div>
+    ${last && last.cert ? `<p class="note">TLS certificate ${esc(last.cert.sha256.slice(0, 16))}…: ${esc(last.cert.decision)}${last.cert.authority_signed ? '' : ' (self-signed)'}</p>` : ''}
+    ${p.last_error ? `<p class="bad">Last sync failed: ${esc(p.last_error)}</p>` : ''}
+    <h3>What the attacker gets</h3>
+    ${scoreBlock(p.score, p.scoring)}
+    ${dial}
+    <div class="actions">
+      <button onclick="syncNow('${p.name}')" ${(!S.ready || (plain && !local)) ? 'disabled' : ''}>Sync now</button>
+    </div>
+    ${plain && !local ? '<p class="note">Disabled: an unpadded sync is the leak itself, so this demo sends it only to a local server.</p>' : ''}
+    ${!plain ? '<p class="note">A manual sync happens when you press it, and the server sees that moment. Right after you hear about a payment, that timing links you to it.</p>' : ''}
+    ${auto}`;
+}
+
+function history() {
+  const rows = [];
+  for (const p of S.profiles) for (const h of p.history || []) rows.push([p.name, h]);
+  rows.sort((a, b) => b[1].at - a[1].at);
+  if (!rows.length) return '<p class="note">No syncs yet.</p>';
+  const t = (h, k) => h.score && h.score[k] && !h.score[k].unavailable ? h.score[k] : null;
+  return `<table><tr><th>Copy</th><th>When</th><th>Trigger</th><th>Padding</th><th>Chain</th><th>Scripthashes</th><th>KiB</th><th>T1 bits</th><th>T2 bits</th><th>Funded (T2, else T1)</th></tr>
+    ${rows.map(([n, h]) => { const a = t(h, 'T1'), b = t(h, 'T2'), f = b || a; return `<tr>
+      <td>${n === 'plain' ? 'Plain' : 'Haystack'}</td><td>${new Date(h.at * 1000).toLocaleTimeString()}</td><td>${h.trigger}</td>
+      <td>${h.padding}</td><td>${Math.round(100 * h.chain_share)}%</td><td>${h.queries}</td><td>${((h.sent + h.received) / 1024).toFixed(1)}</td>
+      <td>${a ? bits(a.precision_bits) : '–'}</td><td>${b ? bits(b.precision_bits) : '–'}</td><td>${f && f.funded_precision != null ? pct(f.funded_precision) : '–'}</td></tr>`; }).join('')}</table>`;
+}
+
+function render() {
+  const [plain, hay] = S.profiles;
+  document.getElementById('where').innerHTML = S.ready
+    ? `${S.regtest ? 'Regtest: the paid demo wallet, restored from its descriptors' : 'The never-paid public-seed demo wallet'} · server <b>${esc(S.server)}</b>`
+    : esc(S.status);
+  document.getElementById('card-plain').innerHTML = card(plain, null);
+  document.getElementById('card-haystack').innerHTML = card(hay, plain);
+  document.getElementById('regtest-card').hidden = !S.regtest;
+  document.getElementById('chain-caveat').hidden = !(hay.chain_share > 0 || (hay.history || []).some(h => h.chain_share > 0));
+  document.getElementById('desc').textContent = S.descriptors ? S.descriptors[0] : '–';
+  document.getElementById('ledger').textContent = hay.ledger || 'no sync yet';
+  document.getElementById('history').innerHTML = history();
+  document.getElementById('log').innerHTML = S.log.map(l => {
+    const i = l.indexOf(' '); return `<div>${new Date(+l.slice(0, i) * 1000).toLocaleTimeString()} ${esc(l.slice(i + 1))}</div>`;
+  }).join('');
+}
+
+async function refresh() {
+  try {
+    const keep = { pad: document.getElementById('pad')?.value, share: document.getElementById('share')?.value, focus: document.activeElement?.id };
+    S = await (await fetch('/api/state')).json();
+    if (keep.focus === 'pad' || keep.focus === 'share') return;
+    render();
+  } catch (e) { document.getElementById('where').textContent = 'Lost contact with haystack-demo: is it still running?'; }
+}
+
+function syncNow(name) { post('/api/sync', { profile: name }); }
+
+function setDial() {
+  const padding = +document.getElementById('pad').value, share = +document.getElementById('share').value;
+  if (!confirm(`Set the dial to padding ${padding}${share ? ` with ${Math.round(share * 100)}% chain decoys` : ''}?\n\n` +
+    `The new setting applies only to addresses first queried after the change. Every address the server has already seen keeps the decoys it had, forever: ` +
+    `withdrawing a decoy would mark it as a decoy, and adding decoys to an old address protects nothing that was already sent. So lowering the dial saves no bandwidth on existing addresses, ` +
+    `and raising it protects only new ones.`)) return;
+  post('/api/dial', { padding, chain_share: share });
+}
+
+function restore(keep) {
+  if (keep) {
+    if (confirm('Delete the wallet database and cache, keeping the descriptor and the ledger file, then sync again? The next sync should send exactly the same scripthashes as before.')) post('/api/restore', { keep_ledger: true });
+    return;
+  }
+  const p = prompt('Restoring WITHOUT the ledger file.\n\nThe decoys are rebuilt from the descriptor, but how many each address had is lost, and every decoy taken from the chain is lost entirely. ' +
+    'If you pick the dial you used before and never used chain decoys, the same decoys come back. Any other value adds or withdraws decoys on every address the server has seen, and the server reads a withdrawn decoy as a decoy.\n\n' +
+    `Which padding did this wallet use? (${S.paddings.join(', ')})`, String(S.profiles[1].padding));
+  if (p === null) return;
+  post('/api/restore', { keep_ledger: false, padding: +p });
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

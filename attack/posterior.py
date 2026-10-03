@@ -2,7 +2,6 @@
 import math
 
 NEG_INF = float("-inf")
-LN2 = math.log(2.0)
 
 
 class Infeasible(ValueError):
@@ -56,7 +55,6 @@ class Block:
         for s in self.forced:
             self.marginal[s] = 1.0
         lw = [self.logw[s] for s in free]
-        entropy = 0.0
         if k_free == 0:
             log_e = 0.0
         elif k_free == len(free):
@@ -65,19 +63,16 @@ class Block:
                 self.marginal[s] = 1.0
         elif max(lw) - min(lw) < 1e-12:
             log_e = log_comb(len(free), k_free) + k_free * lw[0]
-            entropy = log_comb(len(free), k_free)
             for s in free:
                 self.marginal[s] = k_free / len(free)
         else:
-            log_e, entropy = self._solve(free, lw, k_free)
+            log_e = self._solve(free, lw, k_free)
         self.log_evidence = log_e + math.fsum(self.logw[s] for s in self.forced)
-        self.entropy_nats = entropy
 
     def _solve(self, free, lw, k):
         n = len(free)
         fwd, bwd = _esp_rows(lw, k), _esp_rows(lw[::-1], k)
         log_e = fwd[n][k]
-        entropy = log_e
         for i, s in enumerate(free):
             pre, suf = fwd[i], bwd[n - 1 - i]
             loo = NEG_INF
@@ -85,44 +80,22 @@ class Block:
                 loo = _logadd(loo, pre[j] + suf[k - 1 - j])
             p = 0.0 if loo == NEG_INF else min(1.0, math.exp(lw[i] + loo - log_e))
             self.marginal[s] = p
-            entropy -= p * lw[i]
-        return log_e, max(0.0, entropy)
-
-    def log_prob(self, real):
-        members = [s for s in self.items if s in real]
-        if len(members) != self.k or not self.forced.issubset(members):
-            return NEG_INF
-        if any(self.logw[s] == NEG_INF for s in members):
-            return NEG_INF
-        return math.fsum(self.logw[s] for s in members) - self.log_evidence
+        return log_e
 
 
 class Posterior:
-    """Independent blocks; entropy and P(truth) are exact under the model."""
+    """Independent blocks, one per first-seen cohort."""
 
     def __init__(self, blocks):
         self.blocks = list(blocks)
         self.marginal = {}
         for b in self.blocks:
             self.marginal.update(b.marginal)
-        self.entropy_bits = sum(b.entropy_nats for b in self.blocks) / LN2
-        self.entropy_upper_bits = self.entropy_bits
         self.log_evidence = sum(b.log_evidence for b in self.blocks)
-
-    def log2_prob(self, real):
-        if not frozenset(real) <= self.marginal.keys():
-            return NEG_INF
-        total = 0.0
-        for b in self.blocks:
-            lp = b.log_prob(real)
-            if lp == NEG_INF:
-                return NEG_INF
-            total += lp
-        return total / LN2
 
 
 class Mixture:
-    """Posterior mixed over hypotheses h; entropy_bits is the lower bound H(T|h), never flattering."""
+    """Posteriors mixed over hypotheses h (the wallet's script type), weighted by how well each fits."""
 
     def __init__(self, components):
         logs = [lp + post.log_evidence for lp, post in components]
@@ -135,18 +108,4 @@ class Mixture:
             s: math.fsum(wt * p.marginal[s] for wt, p in zip(self.weights, self.posteriors))
             for s in self.posteriors[0].marginal
         }
-        self.entropy_bits = math.fsum(wt * p.entropy_bits for wt, p in zip(self.weights, self.posteriors))
-        h = -math.fsum(wt * math.log2(wt) for wt in self.weights if wt > 0)
-        self.entropy_upper_bits = self.entropy_bits + h
         self.log_evidence = top + math.log(z)
-
-    def log2_prob(self, real):
-        terms = []
-        for wt, p in zip(self.weights, self.posteriors):
-            lp = p.log2_prob(real)
-            if wt > 0 and lp != NEG_INF:
-                terms.append(math.log2(wt) + lp)
-        if not terms:
-            return NEG_INF
-        top = max(terms)
-        return top + math.log2(math.fsum(2.0 ** (t - top) for t in terms))

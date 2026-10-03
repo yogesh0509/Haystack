@@ -13,7 +13,7 @@ use bdk_wallet::bitcoin::hashes::{sha256, Hash};
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Network, ScriptBuf};
 use bdk_wallet::{KeychainKind, Wallet};
-use haystack_electrum::client::{recommended_batch_size, HaystackElectrumClient};
+use haystack_electrum::client::HaystackElectrumClient;
 use haystack_electrum::decoy::decoys_for;
 use haystack_electrum::key::DecoyKey;
 use haystack_electrum::keychain::DecoyKeychain;
@@ -25,7 +25,7 @@ type Error = Box<dyn std::error::Error>;
 struct Args {
     url: String,
     stop_gap: usize,
-    batch_size: Option<usize>,
+    batch_size: usize,
     rounds: usize,
     seed: String,
     out: String,
@@ -37,7 +37,7 @@ fn parse_args() -> Result<Args, Error> {
     let mut a = Args {
         url: "tcp://127.0.0.1:50001".into(),
         stop_gap: 50,
-        batch_size: None,
+        batch_size: 5,
         rounds: 1,
         seed: "haystack-capture-demo".into(),
         out: "capture-truth.json".into(),
@@ -50,7 +50,7 @@ fn parse_args() -> Result<Args, Error> {
         match flag.as_str() {
             "--url" => a.url = val()?,
             "--stop-gap" => a.stop_gap = val()?.parse()?,
-            "--batch-size" => a.batch_size = Some(val()?.parse()?),
+            "--batch-size" => a.batch_size = val()?.parse()?,
             "--rounds" => a.rounds = val()?.parse()?,
             "--seed" => a.seed = val()?,
             "--out" => a.out = val()?,
@@ -92,10 +92,8 @@ fn keychain_name(k: KeychainKind) -> &'static str {
 
 fn main() -> Result<(), Error> {
     let args = parse_args()?;
-    // Five reals' worth per write by default: bdk's 5 when plain, 50 at padding 10.
-    let batch_size = args
-        .batch_size
-        .unwrap_or_else(|| recommended_batch_size(args.padding));
+    // Reals' worth per write, bdk's 5 by default: 5 scripts when plain, 50 at padding 10.
+    let batch_size = args.batch_size;
     let (ext, int, account) = descriptors(&args.seed)?;
     let key = DecoyKey::from_xpubs([account]).expect("one account xpub");
     let mut ledger = Some(Ledger::new(&key));
@@ -181,7 +179,8 @@ fn main() -> Result<(), Error> {
         ext_pub.public_descriptor(KeychainKind::External),
         ext_pub.public_descriptor(KeychainKind::Internal),
         args.stop_gap,
-        batch_size,
+        // Scripts per write as sent, the meaning the field had before batch sizes counted reals.
+        batch_size * args.padding.max(1) as usize,
         args.padding,
         rounds.join(",")
     );

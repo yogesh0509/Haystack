@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from attack.train import TrainingRefused, fit, session_clients
+from attack.a2_structural import TrainingRefused, fit, session_clients
 
 CLIENT = {"name": "haystack-electrum", "version": "0.1.0", "source": "a" * 32}
 

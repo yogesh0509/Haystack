@@ -56,7 +56,7 @@ python3 scripts/honeypot_electrum.py
 ./target/release/haystack-capture --url tcp://127.0.0.1:50001 --rounds 6 \
     --out capture/capture-truth.json
 ./target/release/haystack-capture --url tcp://127.0.0.1:50001 --rounds 6 --padding 10 \
-    --batch-size 50 --out capture/haystack-truth.json --session capture/haystack-session.jsonl
+    --out capture/haystack-truth.json --session capture/haystack-session.jsonl
 ```
 
 The honeypot writes one log for everything it received; run a fresh honeypot per capture so each log
@@ -68,7 +68,7 @@ server received:
 |---|---|---|
 | `--url` | `tcp://127.0.0.1:50001` | The Electrum endpoint to scan against — the honeypot by default. |
 | `--stop-gap` | `50` | Consecutive unused positions before a keychain is considered exhausted. A never-paid wallet queries `2 × stop_gap` scripthashes per round. |
-| `--batch-size` | `5 × padding` | Scripts per socket write, decoys included: five reals' worth, the ratio `bdk_wallet`'s own example uses. So 5 for a plain scan and 50 at padding 10 (`recommended_batch_size` in `haystack-electrum/src/client.rs`). |
+| `--batch-size` | `5` | Real addresses' worth per socket write, the 5 `bdk_wallet`'s own example uses. Each write carries `batch_size × padding` scripts, decoys included: 5 for a plain scan and 50 at padding 10. The output's `batch_size` field records the scripts per write. |
 | `--session` | none | Also write the client's session log (`haystack-session/1`, see `haystack-electrum/src/session.rs`) to this path, replacing any old file. Needs `--padding` above 1. |
 | `--padding` | `1` | Scripts queried per real address. `1` is plain `bdk_electrum`; above 1 the scan goes through `haystack-electrum` with `padding − 1` decoys per position. |
 | `--rounds` | `1` | How many independent full scans to run. Each round creates a brand-new wallet, so consecutive rounds are not a growing session — see the caveat below. |
@@ -81,14 +81,14 @@ its private key. It exists only to make this tool's output reproducible by a thi
 **Rounds are independent scans, not a growing session.** Each round starts a fresh `Wallet`, so
 `--rounds 6` produces six copies of the same never-paid, 100-scripthash scan — useful for exercising
 `attack/`'s many-rounds logic against something a real server actually sent, but it does not simulate
-a wallet receiving payments over time (`attack/synth.py`'s `growing()` does that, synthetically).
+a wallet receiving payments over time (`regtest/`'s session generator does that, on a real chain).
 
 ## The committed fixture
 
 `tests/fixtures/bdk-capture-truth.json` and `tests/fixtures/bdk-honeypot-log.json` are exactly the two
 files this pipeline produces: `capture/` writes the first, `scripts/honeypot_electrum.py` writes the
-second, from the same six rounds, at the same time. Both are committed so the tripwire test
-(`tests/test_tripwire.py`) is reproducible without a live wallet — see `tests/README.md`.
+second, from the same six rounds, at the same time. Both are committed so the plain-capture test
+(`tests/test_plain_capture.py`) is reproducible without a live wallet — see `tests/README.md`.
 
 ## Which `bdk_wallet` version, and why
 

@@ -1,0 +1,20 @@
+[package]
+name = "haystack-demo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-only"
+description = "The demo wallet: bdk_wallet's Electrum example with Haystack swapped in, behind a local web page with the padding dial and the live score."
+
+[dependencies]
+anyhow = "1"
+bdk_wallet = { version = "2.1.0", default-features = false, features = ["std", "rusqlite"] }
+electrum-client = { version = "0.24.1", default-features = false, features = ["proxy", "use-rustls"] }
+haystack-electrum = { path = "../haystack-electrum" }
+haystack-regtest = { path = "../regtest" }
+bdk_testenv = "0.13.1"
+openssl = "0.10"
+rand = "0.8"
+serde_json = "1"
+tiny_http = "0.12"
+ctrlc = { version = "3", features = ["termination"] }

@@ -1,7 +1,7 @@
 import unittest
 
-from attack.a1 import analyse
-from attack.calibrate import run
+from attack.a1_many_rounds import analyse
+from attack.scoring import run
 from attack.observe import Fact, Observation, Round
 
 

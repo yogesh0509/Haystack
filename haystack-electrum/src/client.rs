@@ -12,12 +12,19 @@
 //! No `sync` and no `transaction_broadcast`. Every sync is a full scan, since a revealed-only sync
 //! would drop the unused tail and its decoys, and broadcasting through this session's server would
 //! tie the transaction to it (`docs/01-threat-model.md`).
+//!
+//! A full scan alone can't tell when an unconfirmed transaction has left the mempool: upstream's
+//! `sync` learns that from the wallet's list of expected transactions, which a full-scan request
+//! doesn't carry. `full_scan_expecting` takes that list, from the same
+//! `wallet.start_sync_with_revealed_spks()` an app passed to `sync`, and marks every expected
+//! transaction missing from its real address's history as evicted, as upstream does. The list is
+//! used locally only; nothing extra is sent.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use bdk_core::bitcoin::{block::Header, BlockHash, ScriptBuf, Transaction, Txid};
 use bdk_core::collections::{BTreeMap, HashMap, HashSet};
-use bdk_core::spk_client::{FullScanRequest, FullScanResponse};
+use bdk_core::spk_client::{FullScanRequest, FullScanResponse, SyncRequest};
 use bdk_core::{BlockId, CheckPoint, ConfirmationBlockTime, TxUpdate};
 use electrum_client::{ElectrumApi, Error, HeaderNotification, ToElectrumScriptHash};
 use rand::seq::SliceRandom;
@@ -32,12 +39,6 @@ use crate::planner::RoundPlanner;
 use crate::session::{script_type, LoggedQuery, SessionLog, SessionRound};
 
 const CHAIN_SUFFIX_LENGTH: u32 = 8;
-
-/// The `batch_size` to pass to `full_scan`: five reals' worth of scripts per write, matching
-/// `bdk_wallet`'s own unpadded ratio (5 scripts per write). 50 at padding 10.
-pub fn recommended_batch_size(padding: u32) -> usize {
-    5 * padding.max(1) as usize
-}
 
 /// Durable storage for the ledger. `save` runs after new positions are frozen and before any batch
 /// carrying them leaves the device, so a crash can't later hand a position a different decoy set.
@@ -157,9 +158,14 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
         }
     }
 
-    /// Same signature and meaning as `BdkElectrumClient::full_scan`. `batch_size` is scripts per
-    /// request batch, reals and decoys together; see `recommended_batch_size`. With a session log set, the round is recorded
-    /// whether or not it succeeds, and a failure to record it is returned as an error.
+    /// Same signature as `BdkElectrumClient::full_scan`. `batch_size` counts reals' worth per
+    /// request batch: each write carries `batch_size × padding` scripts, reals and decoys together.
+    /// So the 5 that `bdk_wallet`'s example passes means 5 scripts per write at padding 1, as
+    /// upstream, and 50 at padding 10, and the dial scales the batch without the app knowing.
+    /// With a session log set, the round is recorded whether or not it succeeds, and a failure to
+    /// record it is returned as an error.
+    ///
+    /// This never marks a transaction evicted; `full_scan_expecting` does.
     pub fn full_scan<K: DecoyKeychain>(
         &self,
         request: impl Into<FullScanRequest<K>>,
@@ -167,7 +173,42 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
         batch_size: usize,
         fetch_prev_txouts: bool,
     ) -> Result<FullScanResponse<K>, Error> {
-        let request: FullScanRequest<K> = request.into();
+        self.full_scan_with(request.into(), &HashMap::new(), stop_gap, batch_size, fetch_prev_txouts)
+    }
+
+    /// `full_scan`, also given the unconfirmed transactions the wallet expects at each address:
+    /// pass `wallet.start_sync_with_revealed_spks()`, the request an app would have passed to
+    /// upstream's `sync`. Only its expected transactions are read; its addresses aren't queried
+    /// separately, because the full scan already queries every position the wallet has revealed
+    /// that has history. An expected transaction missing from the server's history for its real
+    /// address goes into the response's `evicted_ats` at the scan's start time, so the wallet stops
+    /// counting it, exactly as after upstream's `sync`. An expected address the scan doesn't reach
+    /// is left alone.
+    pub fn full_scan_expecting<K: DecoyKeychain, I: 'static>(
+        &self,
+        request: impl Into<FullScanRequest<K>>,
+        expected: impl Into<SyncRequest<I>>,
+        stop_gap: usize,
+        batch_size: usize,
+        fetch_prev_txouts: bool,
+    ) -> Result<FullScanResponse<K>, Error> {
+        let mut expected: SyncRequest<I> = expected.into();
+        let expected: HashMap<ScriptBuf, HashSet<Txid>> = expected
+            .iter_spks_with_expected_txids()
+            .filter(|s| !s.expected_txids.is_empty())
+            .map(|s| (s.spk, s.expected_txids))
+            .collect();
+        self.full_scan_with(request.into(), &expected, stop_gap, batch_size, fetch_prev_txouts)
+    }
+
+    fn full_scan_with<K: DecoyKeychain>(
+        &self,
+        request: FullScanRequest<K>,
+        expected: &HashMap<ScriptBuf, HashSet<Txid>>,
+        stop_gap: usize,
+        batch_size: usize,
+        fetch_prev_txouts: bool,
+    ) -> Result<FullScanResponse<K>, Error> {
         if fetch_prev_txouts && self.chain.is_some() {
             // It reads inputs of real transactions only, so with decoys that have transactions the
             // server would see which ones are real.
@@ -175,6 +216,8 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
                 "fetch_prev_txouts isn't supported with chain-sourced decoys",
             ));
         }
+        // Scripts per write on the wire.
+        let batch_size = batch_size.max(1) * self.padding as usize;
         let mut round = SessionRound {
             started: request.start_time(),
             padding: self.padding,
@@ -185,7 +228,7 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
             queries: Vec::new(),
             error: None,
         };
-        let result = self.scan(request, stop_gap, batch_size, fetch_prev_txouts, &mut round);
+        let result = self.scan(request, expected, stop_gap, batch_size, fetch_prev_txouts, &mut round);
         if let Some(log) = &self.session_log {
             if let Err(e) = &result {
                 round.error = Some(e.to_string());
@@ -205,6 +248,7 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
     fn scan<K: DecoyKeychain>(
         &self,
         mut request: FullScanRequest<K>,
+        expected: &HashMap<ScriptBuf, HashSet<Txid>>,
         stop_gap: usize,
         batch_size: usize,
         fetch_prev_txouts: bool,
@@ -325,7 +369,7 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
 
             let mut real_txids = Vec::<Txid>::new();
             let mut decoy_txids = Vec::<Txid>::new();
-            for chunk in items.chunks(batch_size.max(1)) {
+            for chunk in items.chunks(batch_size) {
                 // Logged before sending: if the call fails, these still reached the server.
                 let logged_from = round.queries.len();
                 round.queries.extend(chunk.iter().map(|(tag, script)| {
@@ -357,9 +401,17 @@ impl<E: ElectrumApi> HaystackElectrumClient<E> {
                 for (q, history) in round.queries[logged_from..].iter_mut().zip(&histories) {
                     q.tx_count = Some(history.len());
                 }
-                for ((tag, _), history) in chunk.iter().zip(histories) {
+                for ((tag, script), history) in chunk.iter().zip(histories) {
                     match tag {
                         Tag::Real(pos) => {
+                            // Upstream's eviction rule (0.23.2 `populate_with_spks`).
+                            if let Some(want) = expected.get(script) {
+                                let have: HashSet<Txid> =
+                                    history.iter().map(|res| res.tx_hash).collect();
+                                tx_update.evicted_ats.extend(
+                                    want.difference(&have).map(|txid| (*txid, start_time)),
+                                );
+                            }
                             planner.record(*pos, !history.is_empty());
                             for res in history {
                                 real_txids.push(res.tx_hash);

@@ -8,9 +8,9 @@ import json
 import math
 from pathlib import Path
 
-from .calibrate import run
+from .scoring import run
 from .observe import load_session
-from .train import fit
+from .a2_structural import fit
 
 
 def _mean(xs):

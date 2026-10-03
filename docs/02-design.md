@@ -45,7 +45,7 @@ attack harness turns a log of queries into a score.
 Real addresses recur every round, fresh decoys do not, so intersecting query sets recovers `R` exactly in about three rounds at any padding factor.
 
 Mechanically, the adversary tracks each scripthash across rounds rather than judging a query as a
-whole (`analyse()` in `attack/a1.py`). A scripthash starts unseen, then is watched — queried in every
+whole (`analyse()` in `attack/a1_many_rounds.py`). A scripthash starts unseen, then is watched — queried in every
 round since it first appeared. It leaves "watched" exactly two ways, and both expose it:
 
 - **It goes missing from a later round.** A wallet never stops watching its own addresses, so
@@ -105,11 +105,12 @@ If decoys are separable on shape, a padding factor of 10 delivers close to 1. **
 is an upper bound on privacy, not a measurement of it** — which is exactly why the attack tool, not
 the padding knob, is the real deliverable.
 
-**Measured, not just argued.** `python3 -m attack calibrate` runs the structural classifier
-(`attack/a2.py`) against several decoy designs already immune to A1 — deterministic and fixed —
-averaged over 5 seeds at padding 10, where random guessing reads ~10%. Rows are synthetic, using
-assumed feature distributions from `attack/synth.py`, so they test the attack rather than Haystack;
-the ordering is the real result:
+**Measured, not just argued.** `tests/test_a2.py` runs the structural classifier (`attack/a2_structural.py`)
+against decoy designs already immune to A1 — deterministic and fixed — at padding 10, where random
+guessing reads 10%. Careless chain-sourced decoys stay at 10% against A1 but rise above 60% against
+the classifier. Decoy wallets of the same shape as the real one stay below 20%. The data is
+synthetic, using assumed feature distributions from `tests/synthetic.py`, so it tests the attack rather
+than Haystack.
 
 **Mitigation status (measured on real sessions).** For positions with no history when
 first queried, HMAC-direct decoys ("Where decoys come from" below) match reals on every property the
@@ -135,17 +136,19 @@ This is the hardest unsolved part of the design and where the most time should g
   follows a mempool arrival for a queried address is a strong signal.
 - The query burst is currently in derivation order (see the `.inspect()` output from
   `~/bdk_wallet/examples/electrum.rs:54`). Order alone can separate real from decoy: a structural
-  model that also weighs position in the query reads 100.00% precision on an otherwise
-  well-shaped decoy set sent reals-first, against 9.27% when the same set is shuffled (both
-  synthetic, `python3 -m attack calibrate`).
+  model that also weighs position in the query reads above 50% precision on an otherwise
+  well-shaped decoy set sent reals-first, against below 20% when the same set is shuffled, where
+  chance is 10% (both synthetic, `tests/test_a2.py`).
 - Repeated syncs at a fixed cadence identify the wallet across IP changes.
 
 **Mitigation status.** Order and batching are resolved and built: each stage's reals
-and decoys are shuffled together and cut into batches of `5 × padding`
-(`haystack-electrum/src/client.rs`), and a test requires two scans to place the reals differently.
-Timing is decided and implemented as `haystack-electrum/src/schedule.rs`, detailed in "Sync
-scheduling" below, but the loop that uses it is Week 4. None of the three has
-yet been measured against the structural attack on a real session; that is Week 3. Batch
+and decoys are shuffled together and cut into batches of `5 × padding` scripts. `full_scan`'s
+`batch_size` counts real addresses' worth, so the 5 that `bdk_wallet`'s example passes gives exactly
+that (`haystack-electrum/src/client.rs`), and a test requires two scans to place the reals
+differently. Timing is decided and implemented as `haystack-electrum/src/schedule.rs`, detailed in
+"Sync scheduling" below. Order and batching were measured against the structural attack on real
+regtest sessions in Week 3: with history hidden, a model trained on them alone stays within about
+2.5 points of chance. Timing hasn't been measured, because no attack reads it yet. Batch
 boundaries, the pauses between them, and whether an extension stage happens at all are visible to
 the server and not yet modeled.
 
@@ -177,7 +180,8 @@ two sources, one for each case.
   has, within 1 to 20 transactions. Each chosen script is stored in the ledger
   (`haystack-ledger/2`), because asking the chain again could pick a different address. Where the
   candidates come from, and why that leaks, is under "Yet to be built or decided".
-- **Chain-sourced decoys will be grouped the way real wallets appear on chain. Planned for Week 3.**
+- **Chain-sourced decoys will be grouped the way real wallets appear on chain. Moved to after the
+  hackathon**, together with the on-chain clustering attack it would be measured against.
   The server can't see derivation indices, so a group only needs to look coherent through what the
   server can see: history counts, script types and on-chain links. An example is taking the inputs of
   one multi-input transaction, which were probably owned by one wallet, as one group. Taking real
@@ -195,14 +199,15 @@ two sources, one for each case.
 - **Twenty HMAC bytes are enough.** The chance that a P2WPKH decoy hits an address anyone has used is
   about (used addresses) ÷ 2¹⁶⁰. With 10⁹ used addresses, that is 10⁹ ÷ 1.46×10⁴⁸ ≈ 7×10⁻⁴⁰.
 - **Random-hash decoys only work against real addresses with no history.** Once some reals in `Q`
-  have history and no decoy does, the used reals stand out: 29.59% precision against ~10% chance in
-  `python3 -m attack calibrate`. So HMAC-direct must never be the only source for a wallet that has
-  history.
+  have history and no decoy does, the used reals stand out. In the restored-wallet example of
+  `tests/test_metrics.py` (133 reals, 8 funded, padding 10), all 8 funded reals are exposed: 100%
+  precision among addresses with history. So HMAC-direct must never be the only source for a wallet
+  that has history.
 - **Chain-sourced decoys are wrong for positions with no history.** The same logic runs the other
   way. Chain addresses have history where the real one doesn't. Careless chain-sourced decoys read
-  79.85% in the same calibration.
+  above 60% precision against the structural attack in `tests/test_a2.py`.
 - **A pool every user shares can be subtracted.** If the adversary knows the whole pool, then every
-  queried scripthash outside it is real. The calibration's pool-aware row reads 0.00 bits. The pool
+  queried scripthash outside it is real: the attacker's precision is 100%, which is 0.00 bits. The pool
   must therefore be per-wallet, or be drawn from a set that the wallet's own used addresses are also
   part of, such as all addresses on chain.
 - **Each position pins the pool version it used.** Resizing the pool would otherwise move every
@@ -240,12 +245,11 @@ two sources, one for each case.
   construction. Chain-decoy rows measured there are optimistic for that reason too. On mainnet the
   candidates would follow the chain's real mix, exchanges included.
 
-- **The structural attack on real sessions. Built** (`attack/train.py`, `attack/curve.py`,
+- **The structural attack on real sessions. Built** (`attack/a2_structural.py`, `attack/curve.py`,
   `regtest/src/bin/sessions.rs`); the results are under A2 above.
-- **Mempool-sourced addresses only as the Week 3 fallback.** If chain-sourced groups don't converge,
-  the roadmap's cut line ships mempool-plus-historical decoys and reports the structural score as it
-  is. A mempool sample skews toward exactly-one-recent-transaction and mixed script types. The
-  Electrum protocol has no call that lists the mempool, so it would need another source too.
+- **Mempool-sourced addresses were considered and not used.** A mempool sample skews toward
+  exactly-one-recent-transaction and mixed script types, and the Electrum protocol has no call that
+  lists the mempool, so it would need another source too.
 
 ---
 
@@ -273,6 +277,16 @@ built, so padding has to live inside the box.
 - **Every sync is a full scan.** The reason is the first rule below. So the crate
   has no `sync` method at all, and an app that calls one fails to compile instead of silently sending
   an unpadded query (`docs/04-roadmap.md`, "Public API").
+- **A full scan still detects mempool evictions, given the wallet's expectations. Built in Week 4**
+  (`full_scan_expecting`). Upstream's `sync` request lists, for each address, the unconfirmed
+  transactions the wallet counts, and bdk_electrum marks one evicted when the server's history no
+  longer has it (0.23.2 `populate_with_spks`). A full-scan request carries no such list, so a
+  payment that leaves the mempool, double-spent to an address the wallet never asks about, would
+  stay in the balance forever. `full_scan_expecting` takes the list from
+  `wallet.start_sync_with_revealed_spks()` and applies upstream's rule to the real addresses'
+  answers only. It is local bookkeeping: the scripts sent are the same with or without it, which
+  `expectations_change_nothing_on_the_wire` checks. `regtest/tests/eviction.rs` double-spends an
+  unconfirmed payment and requires Haystack to end with the balance upstream's `sync` gives.
 
 ### Rules and gotchas to preserve
 
@@ -287,7 +301,7 @@ built, so padding has to live inside the box.
   - If decoys leave on a schedule of their own, the intersection attack exposes each one that leaves.
 
   Attaching decoys to positions and making every sync a full scan means nothing ever leaves the
-  query. The harness rule "anything that goes missing is a decoy" (`attack/a1.py`) then stays sound.
+  query. The harness rule "anything that goes missing is a decoy" (`attack/a1_many_rounds.py`) then stays sound.
   The cost is the tail on every sync: 100 positions, which is 1,000 scripthashes at padding 10 with
   `capture/`'s gap limit of 50, even for a wallet that has never been paid.
 - **A decoy with history gets the same follow-up calls as a real one:** the transaction fetch and the
@@ -357,8 +371,8 @@ draw the product Haystack will be built as -
 3. One sync inside `haystack-electrum`: the new crate's work, step by step.
 4. One sync on the wire: every message, and what the server can record from it.
 
-**The metrics are still open** in `docs/03-metric.md`, including which number leads — diagram 2 below
-shows where that choice surfaces in the UI.
+**The metrics are settled** in `docs/03-metric.md`: precision in bits leads, with precision among
+funded addresses beside it. Diagram 2 below shows where they surface in the UI.
 
 ### Terms these diagrams use
 
@@ -401,9 +415,8 @@ The diagrams mix parts that exist with parts that don't. Diagram 1 shows each pa
 style of its border:
 
 - A solid border means the part exists in this repo today. That covers `capture/`, the honeypot, the
-  attack harness, and `haystack-electrum`'s client, decoy selector, ledger and session log. Updated:
-  those four are now built, so they are solid. The shared cache was agreed after this
-  diagram was drawn, and is now built, so it is solid too.
+  attack harness, and `haystack-electrum`'s client, decoy selector, ledger, session log, shared
+  cache and chain-decoy source.
 - A dashed border means an earlier section of these docs decided to build it, and no code exists
   yet.
 - A dotted border means this section proposes it for the first time. Each proposal says why it is
@@ -449,7 +462,7 @@ flowchart LR
 
     classDef decided stroke-dasharray: 8 4
     classDef proposed stroke-dasharray: 2 3
-    class ui,pool decided
+    class ui decided
 ```
 
 This picture answers where each part of Haystack runs, which parts the user has to trust, and which
@@ -476,8 +489,8 @@ The server is the only part on the far side of the trust boundary. It receives e
 The measurement path exists today in three forms (updated). For plain syncs,
 `capture/` runs real `bdk_wallet` full scans against the honeypot and records what the wallet itself
 sent, which is the ground truth; `scripts/honeypot_electrum.py` records what arrived at the server,
-which is the adversary's view; and `python3 -m attack tripwire` checks the two against each other,
-passing all four of its checks against the committed fixtures. For padded syncs, `capture/ --padding
+which is the adversary's view; and `tests/test_plain_capture.py` checks the two against each other
+on the committed fixtures, and that plain Electrum reads 0.00 bits on them. For padded syncs, `capture/ --padding
 10 --session …` does the same through `haystack-electrum` and also writes the session log. For a
 paid wallet, which neither the honeypot nor the public demo seed can ever be, `regtest/` runs
 `bitcoind` and `electrs` on a local regtest chain and gives a wallet a real history (receives,
@@ -522,7 +535,7 @@ stateDiagram-v2
     Syncing --> Home: update applied
     Syncing --> Failed: server refused or disconnected
     Failed --> Syncing: retry with the same query set
-    Home --> Syncing: press Sync, or the jittered timer fires
+    Home --> Syncing: press Sync, or the automatic timer fires
     Home --> Home: hand out a receive address
     Home --> Confirm: move the dial
     Confirm --> Home: confirm or cancel
@@ -541,8 +554,8 @@ stateDiagram-v2
         first queried after the change
     end note
     note right of Demo
-        Sends the unpadded query, so it runs only
-        on the demo wallet against the local honeypot
+        Sends the unpadded query, so it runs only for
+        public-seed wallets against local servers
     end note
 ```
 
@@ -566,7 +579,8 @@ the screen tells them.
   random guess the attacker's top guesses do, `-log2(precision)`. Plain Electrum reads 0.00 bits — the
   attacker's guess is certain. For the demo wallet at padding 10 with fixed decoys, the attacker's
   precision matches a random guess exactly, 10.00% either way, so it reads the full
-  `log2(10) = 3.32` bits (the fixed-decoy table printed by `python3 -m attack tripwire`).
+  `log2(10) = 3.32` bits in every round (`python3 -m attack score --session
+  tests/fixtures/haystack-session.jsonl --honeypot tests/fixtures/haystack-honeypot-log.json`).
   `docs/03-metric.md` has the full metric set and the reasoning for leading with this one.
 
 **Why the dial is set once.** An address's protection is fixed by the decoys that were first queried
@@ -574,7 +588,7 @@ alongside it. A decoy added later has a later first-seen round. If the attacker 
 addresses first appeared in each round, a late decoy protects nothing that came before it. With a
 fixed padding it can work that count out, by dividing the number of new queries by the padding. The
 attack harness grants the count outright, and whether it should is open question 3 in
-`docs/03-metric.md`. The table below comes from the repo's own attacker: `attack.calibrate.run`,
+`docs/03-metric.md`. The table below comes from the repo's own attacker: `attack.scoring.run`,
 comparing every sync, with 100 real scripthashes, fixed random decoys and 8 rounds, run from a
 scratch script that is not in the repo yet. Notice that only the first two rows get the protection
 their query size suggests.
@@ -610,8 +624,9 @@ the dial saves no bandwidth for them. The confirm step tells the user both facts
   electrum.blockstream.info answered all 1,000 scripts in one write (`docs/04-roadmap.md`, Week 2).
   A retry sends the same positions with the same decoys, so it reveals nothing new.
 - **Plain versus padded demo.** The roadmap's side-by-side demo sends the unpadded query, which is
-  the leak itself. So it runs only on the demo wallet against the local honeypot, and never on a real
-  wallet against a public server.
+  the leak itself. So it runs only for the two public-seed wallets, the never-paid demo wallet and
+  the regtest wallet, against local servers: the honeypot or regtest's `electrs`. It never runs on a
+  real wallet or against a public server.
 
 ### 3. One sync inside haystack-electrum
 
@@ -865,14 +880,27 @@ above). This section is the timing half of A3's mitigation.
 
 ### Yet to be built or decided
 
-- **The loop that uses the timer. Week 4.** It sleeps until `SyncTimer` is due, runs `full_scan`, then
-  calls `finished()`. Nothing calls `SyncTimer` today; `capture/` runs its scans back to back.
-- **The default mean. Week 4.** It trades bandwidth against how stale the balance gets. For example,
-  a mean of 30 minutes gives 24 × 60 ÷ 30 = 48 syncs a day on average, which for the demo wallet is
-  48 × 1,000 = 48,000 queries a day.
-- **What a phone does when the operating system suspends background timers. Week 4.** The schedule
-  can slip, and when the app returns to the foreground something must decide what to do. The rule
-  above, never syncing just because the app came to the foreground, still applies.
+- **The loop that uses the timer. Week 4, in the demo wallet.** It sleeps until `SyncTimer` is due,
+  runs `full_scan`, then calls `finished()`.
+- **The default mean is 30 minutes (decided 2026-10-02, `DEFAULT_MEAN`).** It trades bandwidth
+  against how stale the balance gets. A mean of 30 minutes gives 24 × 60 ÷ 30 = 48 syncs a day on
+  average. At Week 3's measured 253.5 KiB per steady-state sync (the paid regtest wallet at padding
+  10, with its saved cache), that is 48 × 253.5 = 12,168 KiB, about 11.9 MiB a day. With an
+  exponential delay, the balance's age at a random moment is exponential with the same mean, so it
+  is 30 minutes old on average and older than an hour e^(−60/30) ≈ 13.5% of the time. A 60-minute
+  mean would halve the bandwidth, but the balance would be older than an hour e^(−1) ≈ 36.8% of the
+  time. **The demo runs with a 2-minute mean**, so automatic syncs happen while people watch, and the
+  screen says so. That is a presentation setting, not a recommendation.
+- **A missed sync is skipped, not fired late (decided 2026-10-02, `SyncTimer::missed` and `skip`).**
+  A phone freezes background apps while its clock keeps running, so when the app returns the timer
+  is already past due. Firing then would tie the sync to the moment the user looked. Instead, a loop
+  that wakes more than `LATE` (5 s) after the due time draws a fresh delay from now. Example, at a
+  30-minute mean: the app is frozen at 10:00 with a sync due at 10:12, and the user opens it at
+  11:00 because someone said they paid. Firing at 11:00:01 tells the server the user looked right
+  after a payment landed. A fresh draw gives, say, 11:23. Because the delay is memoryless, the
+  chance of a sync within 5 minutes of the app returning is 1 − e^(−5/30) ≈ 15.4%, the same as in
+  any 5-minute window of an app that was never frozen. The same rule covers a timer that comes due
+  while a manual sync is running.
 - **No attack models sync timing yet.** It is on diagram 4's list of things the server records that
   the harness doesn't read.
 - **Subscribe, as a stretch goal only** (`docs/04-roadmap.md`), for the same reason as bdk's
@@ -905,9 +933,9 @@ Ranked by how much they threaten the design.
 **Resolved: the metric.** Posterior entropy, not the set-size proxy — see "A note on adversary
 strength" above and `docs/03-metric.md`. Attacks contribute evidence (weights) to one Bayesian
 posterior over which subset of `Q` is real; every metric is read off that posterior. Precision in
-bits is the headline, joint entropy and truth bits are kept as a calibration check, advantage is
-secondary, and mean per-address entropy was implemented and dropped because it falls as padding
-rises.
+bits is the headline, with precision among funded addresses beside it. Joint entropy, truth bits,
+advantage and mean per-address entropy were implemented and dropped; `docs/03-metric.md` gives the
+reasons.
 
 **Resolved: scan policy.** Every sync is a full scan — see the first rule in "haystack-electrum". bdk's own
 full-scan-then-sync pattern is kept in `docs/04-roadmap.md` as a stretch goal, not built by default.
@@ -940,7 +968,7 @@ case (that's the real design target), and measure and report the on-chain case h
 it's expected to look worse. A scheme that only survives the single-round case is theatre — no real
 wallet syncs just once.
 
-The code gives the first three levels short names — `T0`, `T1`, `T2` in `attack/harness.py` —
+The code gives the first three levels short names — `T0`, `T1`, `T2` in `attack/scoring.py` —
 because a function needs a parameter value, not because the idea needs a code. `T3` (the on-chain
 level) isn't implemented yet. A reported score is only meaningful alongside the level it was
 measured against; see `docs/03-metric.md`.

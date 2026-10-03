@@ -3,6 +3,7 @@ name = "haystack-regtest"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "GPL-3.0-only"
 description = "A real wallet history on a local regtest chain (bitcoind and electrs, via bdk_testenv), for testing haystack-electrum against a real Electrum server."
 
 [dependencies]

@@ -1,4 +1,4 @@
-"""A1: what repetition across rounds reveals -- persistence, cohorts, and activation."""
+"""A1, the many-rounds attack: what repetition across rounds reveals -- persistence, cohorts, and activation."""
 
 
 def analyse(obs):

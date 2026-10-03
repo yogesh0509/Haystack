@@ -35,6 +35,5 @@ regtest/sessions/
 out/
 
 # Self Documentation
-/docs/04-roadmap.md
 /docs/05-prior-art.md
 /docs/06-decision-log.md

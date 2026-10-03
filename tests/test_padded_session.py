@@ -1,7 +1,7 @@
 """The first score on real padded traffic: six haystack-electrum scans at padding 10, against the honeypot.
 
 The three fixtures come from one run of `capture/ --padding 10 --session …` against
-`scripts/honeypot_electrum.py`, the same pipeline and demo wallet as the plain tripwire fixtures:
+`scripts/honeypot_electrum.py`, the same pipeline and demo wallet as the plain capture fixtures:
 what the server received, what the wallet's own `inspect` callback saw it send, and the client's
 session log. The honeypot answers "nothing found" to everything, so this wallet is never paid: the
 session exercises the many-rounds attack, not activation or the structural attack.
@@ -11,7 +11,7 @@ import math
 import os
 import unittest
 
-from attack.calibrate import per_round
+from attack.scoring import per_round
 from attack.observe import check_plain, check_session, load_capture, load_honeypot, load_session
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")

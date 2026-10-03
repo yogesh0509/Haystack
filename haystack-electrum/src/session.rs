@@ -61,6 +61,7 @@ pub struct SessionRound {
     pub started: u64,
     pub padding: u32,
     pub stop_gap: usize,
+    /// Scripts per write as sent: the `batch_size` passed to `full_scan` times the padding.
     pub batch_size: usize,
     /// Share of each new position's decoys taken from the chain; 0 when the dial is off.
     pub chain_share: f64,
@@ -150,7 +151,7 @@ impl SessionLog for JsonLinesFile {
     }
 }
 
-/// The names `attack/synth.py` uses for the five standard output types.
+/// The names `tests/synthetic.py` uses for the five standard output types.
 pub fn script_type(script: &Script) -> &'static str {
     if script.is_p2wpkh() {
         "p2wpkh"

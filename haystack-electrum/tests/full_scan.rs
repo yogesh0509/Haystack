@@ -19,7 +19,7 @@ use bdk_core::bitcoin::{
     absolute, transaction, Amount, Network, OutPoint, Script, ScriptBuf, Transaction, TxIn, TxOut,
     Txid, WPubkeyHash,
 };
-use bdk_core::spk_client::{FullScanRequest, FullScanResponse};
+use bdk_core::spk_client::{FullScanRequest, FullScanResponse, SyncRequest};
 use bdk_electrum::BdkElectrumClient;
 use electrum_client::{
     Batch, ElectrumApi, Error, GetBalanceRes, GetHeadersRes, GetHistoryRes, GetMerkleRes,
@@ -179,7 +179,7 @@ fn padded_scan_gives_upstreams_wallet_data() {
         .unwrap();
     for padding in [1, 10] {
         let ours = HaystackElectrumClient::new(FakeServer::wallet(), key(), padding)
-            .full_scan(request(), STOP_GAP, 50, false)
+            .full_scan(request(), STOP_GAP, 5, false)
             .unwrap();
         assert_eq!(txids(&ours), txids(&upstream), "padding {padding}");
         assert_eq!(seen(&ours), seen(&upstream), "padding {padding}");
@@ -201,12 +201,77 @@ fn padding_one_queries_exactly_upstreams_scripts() {
         .unwrap();
     let our_server = FakeServer::wallet();
     let _ = HaystackElectrumClient::new(&our_server, key(), 1)
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     let up: BTreeSet<_> = up_server.queried().into_iter().collect();
     let ours: BTreeSet<_> = our_server.queried().into_iter().collect();
     assert_eq!(up.len(), REALS);
     assert_eq!(ours, up);
+}
+
+fn evicted(r: &FullScanResponse<Keychain>) -> BTreeSet<Txid> {
+    r.tx_update.evicted_ats.iter().map(|(txid, _)| *txid).collect()
+}
+
+#[test]
+fn an_expected_transaction_that_left_the_mempool_is_evicted_as_upstreams_sync_does() {
+    // The wallet counts the unconfirmed payments to external 3 and 49. Then external 3's leaves
+    // the mempool, say double-spent elsewhere, so the server no longer lists it.
+    let before = FakeServer::wallet();
+    let gone_spk = real_spk(Keychain::External, 3);
+    let kept_spk = real_spk(Keychain::External, 49);
+    let gone = before.history[&gone_spk][0].tx_hash;
+    let kept = before.history[&kept_spk][0].tx_hash;
+    let mut after = FakeServer::wallet();
+    after.history.remove(&gone_spk);
+    let expected = || {
+        SyncRequest::<()>::builder()
+            .spks([gone_spk.clone(), kept_spk.clone()])
+            .expected_spk_txids([(gone_spk.clone(), gone), (kept_spk.clone(), kept)])
+            .build()
+    };
+
+    let upstream = BdkElectrumClient::new(&after).sync(expected(), 5, false).unwrap();
+    let upstream: BTreeSet<Txid> = upstream.tx_update.evicted_ats.iter().map(|(t, _)| *t).collect();
+    assert_eq!(upstream, BTreeSet::from([gone]));
+
+    for padding in [1, 10] {
+        let ours = HaystackElectrumClient::new(&after, key(), padding)
+            .full_scan_expecting(request(), expected(), STOP_GAP, 5, false)
+            .unwrap();
+        assert_eq!(evicted(&ours), upstream, "padding {padding}");
+        // Without the expectations, nothing says the payment is gone: the gap this closes.
+        let blind = HaystackElectrumClient::new(&after, key(), padding)
+            .full_scan(request(), STOP_GAP, 5, false)
+            .unwrap();
+        assert!(evicted(&blind).is_empty());
+    }
+}
+
+#[test]
+fn expectations_change_nothing_on_the_wire() {
+    let with = FakeServer::wallet();
+    let without = FakeServer::wallet();
+    let spk = real_spk(Keychain::External, 3);
+    let txid = with.history[&spk][0].tx_hash;
+    let expected = SyncRequest::<()>::builder()
+        .spks([spk.clone()])
+        .expected_spk_txids([(spk, txid)])
+        .build();
+    let a = HaystackElectrumClient::new(&with, key(), 1)
+        .full_scan_expecting(request(), expected, STOP_GAP, 5, false)
+        .unwrap();
+    let b = HaystackElectrumClient::new(&without, key(), 1)
+        .full_scan(request(), STOP_GAP, 5, false)
+        .unwrap();
+    // The same scripts, though the shuffle orders them differently each scan.
+    let sorted = |s: &FakeServer| {
+        let mut q = s.queried();
+        q.sort();
+        q
+    };
+    assert_eq!(sorted(&with), sorted(&without));
+    assert!(evicted(&a).is_empty() && evicted(&b).is_empty());
 }
 
 fn all_reals() -> BTreeSet<ScriptBuf> {
@@ -220,7 +285,7 @@ fn all_reals() -> BTreeSet<ScriptBuf> {
 fn server_sees_every_real_among_ten_times_as_many() {
     let server = FakeServer::wallet();
     let _ = HaystackElectrumClient::new(&server, key(), 10)
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     let queried = server.queried();
     assert_eq!(queried.len(), REALS * 10);
@@ -236,7 +301,7 @@ fn where_the_reals_sit_in_the_query_is_unpredictable() {
     let real_slots = || {
         let server = FakeServer::wallet();
         let _ = HaystackElectrumClient::new(&server, key(), 10)
-            .full_scan(request(), STOP_GAP, 50, false)
+            .full_scan(request(), STOP_GAP, 5, false)
             .unwrap();
         let reals = all_reals();
         server
@@ -254,10 +319,10 @@ fn where_the_reals_sit_in_the_query_is_unpredictable() {
 fn second_scan_sends_the_same_scripts() {
     let server = FakeServer::wallet();
     let client = HaystackElectrumClient::new(&server, key(), 10);
-    let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let _ = client.full_scan(request(), STOP_GAP, 5, false).unwrap();
     let first: BTreeSet<_> = server.queried().into_iter().collect();
     server.batches.lock().unwrap().clear();
-    let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let _ = client.full_scan(request(), STOP_GAP, 5, false).unwrap();
     let second: BTreeSet<_> = server.queried().into_iter().collect();
     // Nothing vanishes and nothing appears, so intersecting rounds removes no decoy.
     assert_eq!(first, second);
@@ -269,7 +334,7 @@ fn raising_the_dial_leaves_frozen_positions_alone() {
     let server = FakeServer::wallet();
     let ledger = {
         let client = HaystackElectrumClient::new(&server, key(), 10);
-        let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+        let _ = client.full_scan(request(), STOP_GAP, 5, false).unwrap();
         let ledger = client.ledger();
         let mut copy = Ledger::new(&key());
         for (pos, n) in ledger.confirmed() {
@@ -281,7 +346,7 @@ fn raising_the_dial_leaves_frozen_positions_alone() {
     let _ = HaystackElectrumClient::new(&server, key(), 20)
         .with_ledger(ledger)
         .unwrap()
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     assert_eq!(server.queried().len(), REALS * 10);
 }
@@ -315,7 +380,7 @@ fn a_decoy_with_history_is_fetched_like_a_real_and_then_dropped() {
     );
     let decoy_txid = server.history[&decoy][0].tx_hash;
     let response = HaystackElectrumClient::new(&server, key(), 10)
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     assert!(server.tx_requests.lock().unwrap().contains(&decoy_txid));
     assert!(!txids(&response).contains(&decoy_txid));
@@ -338,7 +403,7 @@ fn session_log_matches_what_the_server_received() {
     let log = MemoryLog::default();
     let _ = HaystackElectrumClient::new(&server, key(), 10)
         .with_session_log(log.clone())
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     let rounds = log.0.lock().unwrap();
     assert_eq!(rounds.len(), 1);
@@ -381,10 +446,14 @@ fn session_log_matches_what_the_server_received() {
         assert_eq!(q.script_type, "p2wpkh");
     }
 
-    // Stage 1 is 1,000 scripts, stage 2 the other 510; batches of at most 50, numbered in order.
+    // Stage 1 is 1,000 scripts, stage 2 the other 510. A batch size of 5 reals' worth at padding 10
+    // is 50 scripts per write, numbered in order.
     let in_stage = |n| round.queries.iter().filter(|q| q.stage == n).count();
     assert_eq!((in_stage(0), in_stage(1)), (1000, 510));
+    assert_eq!(round.batch_size, 50);
     let batches = server.batches.lock().unwrap();
+    assert!(batches.iter().all(|b| b.len() <= 50));
+    assert_eq!(batches.iter().filter(|b| b.len() == 50).count(), 1000 / 50 + 510 / 50);
     let mut offset = 0;
     for (b, batch) in batches.iter().enumerate() {
         assert!(round.queries[offset..offset + batch.len()]
@@ -403,7 +472,7 @@ fn a_failed_round_is_still_logged() {
     let log = MemoryLog::default();
     let result = HaystackElectrumClient::new(&server, key(), 10)
         .with_session_log(log.clone())
-        .full_scan(request(), STOP_GAP, 50, false);
+        .full_scan(request(), STOP_GAP, 5, false);
     assert!(result.is_err());
     let rounds = log.0.lock().unwrap();
     let round = &rounds[0];
@@ -426,7 +495,7 @@ fn the_ledger_file_carries_every_decoy_across_a_restart() {
     let server = FakeServer::wallet();
     let scan = |client: HaystackElectrumClient<&FakeServer>| {
         server.batches.lock().unwrap().clear();
-        let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+        let _ = client.full_scan(request(), STOP_GAP, 5, false).unwrap();
         server.queried().into_iter().collect::<BTreeSet<_>>()
     };
 
@@ -484,7 +553,7 @@ fn ledger_is_saved_before_the_batches_that_use_it() {
             batches_sent: Arc::clone(&server.batch_count),
             saves: Arc::clone(&saves),
         })
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     // Stage 1 freezes 100 positions before any batch; its 1,000 scripts go out as 20 batches of
     // 50; stage 2 freezes 51 more before its own batches.
@@ -661,7 +730,7 @@ fn chain_decoys_have_history_and_never_reach_the_wallet() {
     let log = MemoryLog::default();
     let ours = chain_client(&server)
         .with_session_log(log.clone())
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     assert_eq!(txids(&ours), txids(&upstream));
     assert_eq!(seen(&ours), seen(&upstream));
@@ -707,10 +776,10 @@ fn chain_decoys_are_frozen_like_any_other() {
     let server = chain_server();
     let log = MemoryLog::default();
     let client = chain_client(&server).with_session_log(log.clone());
-    let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let _ = client.full_scan(request(), STOP_GAP, 5, false).unwrap();
     let first: BTreeSet<_> = server.queried().into_iter().collect();
     server.batches.lock().unwrap().clear();
-    let _ = client.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let _ = client.full_scan(request(), STOP_GAP, 5, false).unwrap();
     let second: BTreeSet<_> = server.queried().into_iter().collect();
     assert_eq!(first, second);
     assert!(log.0.lock().unwrap()[1].probes.is_empty(), "nothing new to find");
@@ -722,7 +791,7 @@ fn chain_decoys_are_frozen_like_any_other() {
         .with_ledger(import(&text, &key()).unwrap())
         .unwrap();
     server.batches.lock().unwrap().clear();
-    let _ = restarted.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let _ = restarted.full_scan(request(), STOP_GAP, 5, false).unwrap();
     assert_eq!(server.queried().into_iter().collect::<BTreeSet<_>>(), first);
 }
 
@@ -730,7 +799,7 @@ fn chain_decoys_are_frozen_like_any_other() {
 fn chain_decoys_refuse_prevout_fetching() {
     let server = chain_server();
     assert!(chain_client(&server)
-        .full_scan(request(), STOP_GAP, 50, true)
+        .full_scan(request(), STOP_GAP, 5, true)
         .is_err());
     assert!(server.queried().is_empty());
 }
@@ -753,7 +822,7 @@ fn a_restart_with_the_saved_cache_refetches_nothing_real_or_decoy() {
     let server = chain_server();
     let store = MemoryCache::default();
     let first = chain_client(&server).with_cache_store(store.clone());
-    let _ = first.full_scan(request(), STOP_GAP, 50, false).unwrap();
+    let _ = first.full_scan(request(), STOP_GAP, 5, false).unwrap();
     let fetched: BTreeSet<Txid> = server.tx_requests.lock().unwrap().drain(..).collect();
     let real_txids: BTreeSet<Txid> = PAID
         .iter()
@@ -769,7 +838,7 @@ fn a_restart_with_the_saved_cache_refetches_nothing_real_or_decoy() {
         .with_ledger(import(&ledger, &key()).unwrap())
         .unwrap()
         .with_saved_cache(saved)
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     assert!(server.tx_requests.lock().unwrap().is_empty());
 
@@ -777,7 +846,7 @@ fn a_restart_with_the_saved_cache_refetches_nothing_real_or_decoy() {
     let _ = chain_client(&server)
         .with_ledger(import(&ledger, &key()).unwrap())
         .unwrap()
-        .full_scan(request(), STOP_GAP, 50, false)
+        .full_scan(request(), STOP_GAP, 5, false)
         .unwrap();
     let refetched: BTreeSet<Txid> = server.tx_requests.lock().unwrap().drain(..).collect();
     // The probes' own transaction fetches came first and are gone; the follow-ups repeat exactly.

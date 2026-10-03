@@ -1,8 +1,8 @@
 import unittest
 
-from attack.a2 import StructuralModel
-from attack.calibrate import run
-from attack.synth import world
+from attack.a2_structural import StructuralModel
+from attack.scoring import run
+from tests.synthetic import world
 
 PADDING = 10
 

@@ -33,10 +33,10 @@ and see the exchange rate you're getting.
 | [docs/01-threat-model.md](docs/01-threat-model.md) | Who the adversary is, what they see, what is out of scope |
 | [docs/02-design.md](docs/02-design.md) | Decoy construction, the three attacks that break naive designs, open questions |
 | [docs/03-metric.md](docs/03-metric.md) | The deanonymisation score — definition, calibration, what it does not capture |
-| [docs/04-roadmap.md](docs/04-roadmap.md) | Four-week plan, week-1 tripwire, cut lines |
-| [docs/05-prior-art.md](docs/05-prior-art.md) | What already exists and how to position honestly against it |
+| [docs/04-roadmap.md](docs/04-roadmap.md) | The four-week plan: what each week delivered, the evidence, known limitations, and what comes after the hackathon |
 | [docs/07-walkthrough.md](docs/07-walkthrough.md) | Testing every case, step by step: the leak, new and restored wallets, chain decoys, restarts, the bandwidth curve |
 | [scripts/](scripts/) | Runnable demonstrations of the problem — see below |
+| [demo/](demo/) | The demo wallet: a local web page with the padding dial, the live score and the bytes each sync costs |
 
 ## Verify the problem in five minutes
 
@@ -53,16 +53,36 @@ python3 scripts/electrum_probe.py --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 #    its entire address set, because every reply is "nothing found".
 python3 scripts/honeypot_electrum.py
 
-# 4. Why the obvious decoy scheme fails after two syncs, run by the project's own attacker.
-python3 -m attack strategies
+# 4. Why the obvious decoy scheme fails after two syncs, checked with the project's own attacker.
+python3 -m unittest -v tests.test_regression
+
+# 5. Haystack's answer: six real padded syncs of the demo wallet, scored by the same attacker.
+python3 -m attack score --session tests/fixtures/haystack-session.jsonl \
+    --honeypot tests/fixtures/haystack-honeypot-log.json --tier T1
 ```
 
 Full walkthrough with expected output in [docs/00-problem.md](docs/00-problem.md). To test every
 case Haystack handles, new and paid wallets included, follow [docs/07-walkthrough.md](docs/07-walkthrough.md).
 
+## Run the demo wallet
+
+Built and tested on WSL (Ubuntu 24.04) with Rust stable, Python 3, `libssl-dev` and `pkg-config`.
+The first build downloads `bitcoind` and `electrs` for the local regtest chain.
+
+```bash
+# The structural attacker's training set, from the same client build: about 15 minutes.
+cargo run --release -p haystack-regtest --bin sessions -- --out out/sessions
+# A private regtest chain with a paid wallet; open http://127.0.0.1:7878
+cargo run --release -p haystack-demo -- --regtest --mean-minutes 2
+```
+
+`--mean-minutes 2` runs the automatic sync at demo speed; the product default is 30 minutes.
+[demo/README.md](demo/README.md) has the other servers, the flags, and the line-by-line comparison
+with `bdk_wallet`'s own Electrum example.
+
 ## Two results worth knowing up front
 
-Both fall out of `python3 -m attack strategies`, and both are counterintuitive enough that a naive
+Both are checked by `tests/test_regression.py`, and both are counterintuitive enough that a naive
 implementation gets them backwards:
 
 - **Re-randomising decoys every sync destroys privacy.** Your real addresses appear in every round;
@@ -74,21 +94,20 @@ implementation gets them backwards:
 
 ## Status
 
-**Week 1 done:** the attack harness and metric suite are implemented and calibrated — `attack/`,
-`python3 -m attack tripwire` and `calibrate`.
+Weeks 0 to 3 are done, and Week 4, the demo wallet and the writeup, is in progress until the
+submission deadline on 2026-10-05. [docs/04-roadmap.md](docs/04-roadmap.md) lists what each week
+delivered, with the evidence, and the known limitations.
 
-**Week 2 in progress:** `haystack-electrum`, the padded query engine, runs real `bdk_wallet` full
-scans. Its tests include a correctness gate that runs upstream `bdk_electrum` beside it on the same
-server and requires identical wallet data. The first score on real padded traffic — six scans of the
-demo wallet at padding 10, sent over a real socket to the local honeypot — is 3.32 bits in every
-round, the ceiling for padding 10 (`tests/test_padded_session.py`). That covers only the many-rounds
-attacker. On a local regtest chain, a wallet with a real history — receives, a two-input spend
-with change, unconfirmed transactions, a reorganisation — ends up identical whether scanned by
-upstream `bdk_electrum` or by Haystack (`regtest/`). The client also writes a session log — every query, whether it was real, and the server's
-answer — checked query for query against the honeypot's own log. But the honeypot answers "nothing
-found" to everything, so the structural attack and activation have nothing real to work on until a
-real server answers. See
-[docs/04-roadmap.md](docs/04-roadmap.md) for what lands when.
+- **The attacker** (`attack/`) scores a sync session in bits, calibrated so plain Electrum reads
+  `0.00`. It runs the many-rounds attack and a structural attack trained on labelled sessions of
+  other wallets.
+- **The padded client** (`haystack-electrum/`) is a sibling crate to `bdk_electrum` with the same
+  `full_scan` signature. On a local regtest chain, a wallet with a real history ends up identical
+  whether scanned by upstream `bdk_electrum` or by Haystack at padding 10 (`regtest/`).
+- **The headline result**, at padding 10 averaged over 13 regtest wallets: the headline reads about
+  2.7 bits, but every funded address of a restored wallet is exposed unless some decoys come from the
+  chain, and those help only against a server that ignores its own lookup log
+  (`python3 -m attack curve`, [docs/07-walkthrough.md](docs/07-walkthrough.md)).
 
 ## Built on
 
@@ -97,4 +116,4 @@ derivation; `bdk_electrum` for the sync path being replaced.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0 — see [LICENSE](LICENSE).

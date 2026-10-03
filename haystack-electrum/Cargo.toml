@@ -3,6 +3,7 @@ name = "haystack-electrum"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "GPL-3.0-only"
 description = "Sibling crate to bdk_electrum: the same full_scan surface, with decoy padding injected at the batch level. See docs/02-design.md, 'Sync integration'."
 
 [features]

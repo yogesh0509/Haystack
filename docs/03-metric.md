@@ -2,12 +2,11 @@
 
 **Status: implemented and calibrated.** Every metric below is computed by `attack/`: evidence from
 each attack combines into one posterior belief (`attack/posterior.py`), scored against ground truth
-(`attack/metrics.py`), and checked against a 13-configuration calibration suite plus a real-capture
-tripwire (`attack/calibrate.py` — `python3 -m attack calibrate` / `tripwire`). All 36 Python tests
-pass. Real padded traffic now exists: six `haystack-electrum` scans at padding 10 against the honeypot
-read 3.32 bits, the ceiling, in every round (`tests/test_padded_session.py`). What's still open is in
-the TODOs at the end: mainly, the structural attack and activation have run only on synthetic
-traffic, because the honeypot can't supply the server's real answers they need.
+(`attack/scoring.py`), and checked by the Python tests: plain Electrum reads 0.00 on synthetic data
+and on a real captured wallet, a perfect scheme reads the analytic ceiling, and known-broken decoy
+schemes read near zero (`tests/`). All 45 pass. The metrics run on real traffic: padded sessions
+against the honeypot, and paid regtest wallets whose sessions carry the server's real answers, scored by the structural
+attacker trained on other wallets' sessions (`python3 -m attack curve`).
 
 The problem statement asks for "a meaningful metric that reads 0 for an ordinary Electrum query."
 This document defines that metric, explains how it's calibrated, and states clearly what the number
@@ -83,12 +82,10 @@ Summing the pairs that contain each address gives its marginal: `p(a) = 3 × 25.
 `p(b) = p(c) = p(d) = 25.0% + 2 × 8.3% = 41.7%`, `p(e) = 0%`. These add to 2.0, the number of real
 addresses, as they must.
 
-If the true pair is `{a, b}`, the metrics below read: precision 66.7% against a chance rate of 40%
-(the top guess `a` is right; the second guess is a three-way tie among `b`, `c`, `d`, right ⅓ of the
-time — `1 + ⅓ = 1.33` correct out of 2); joint entropy 2.40 bits (with `e` merely ruled out and no
-structural evidence at all, the four survivors would be uniform, `log2(C(4,2)) = 2.58` bits — the
-extra weight on `a` brings it down slightly further); truth bits `-log2(25.0%) = 2.00`, the cost of
-the actual answer under this belief.
+If the true pair is `{a, b}`, the headline below reads: precision 66.7% against a chance rate of
+40%. The top guess `a` is right. The second guess is a three-way tie among `b`, `c` and `d`, right ⅓
+of the time. So `1 + ⅓ = 1.33` of the 2 guesses are correct on average, and `1.33 / 2 = 66.7%`. In
+bits that is `-log2(0.667) = 0.58`.
 
 **Why this stays computable at real sizes.** Listing every subset is impossible once `|Q|` and `|R|`
 are realistic — `C(700, 70) ≈ 3.4 × 10^97`. Instead, the total is built up one address at a time,
@@ -105,7 +102,7 @@ add c (w=1)    [1, 5,  7]
 add d (w=1)    [1, 6, 12]   <- 12, the total score of every pair
 ```
 
-That takes `|Q| × |R|` steps — 1,000 × 100 = 100,000 for the largest calibration-suite rows
+That takes `|Q| × |R|` steps — 1,000 × 100 = 100,000 for one round of the padded demo wallet
 (`_esp_rows`, `attack/posterior.py`). Running the same table backwards gives each `p(s)`; a short
 formula from the same table gives the entropy. `tests/test_posterior.py` checks this method against
 brute-force enumeration on 300 random small cases, and against the closed form for the uniform case
@@ -170,96 +167,66 @@ are no better than random, the ceiling for that padding level.
   brings precision back down to the full `10%` chance rate — `precision_bits = -log2(0.10) = 3.32`
   bits, the ceiling.
 
-**Why this is the headline, not adversary advantage.** Both are read off the same precision number,
-but advantage (`precision - chance`) can't distinguish a well-protected wallet from a fully exposed
-one: plain Electrum gives `100% - 100% = 0` and the ceiling gives `10% - 10% = 0` — the real capture's
-own tripwire output reads `adv 0.00` on both rows. Precision in bits gives `0.00` and `3.32` for the
-same two rows, which is the distinction a headline number needs to make. Advantage is kept as a
-secondary column (below) because it is still the plainest way to state a specific attack's gain in
-one sentence — "twice as good as guessing" needs no logarithm.
+### Dropped metrics
 
-### The calibration check: joint entropy and truth bits
-
-Precision only asks about the attacker's single best guess. Two more numbers, read off the same
-belief, check whether that guess is backed by a trustworthy belief rather than a lucky ranking.
-
-**Joint entropy** is the entropy of the belief over which *whole subset* of `Q` is real — not
-per-address, over the joint question — reported per real address as `joint/R`. Its `2^H` form is the
-"effective anonymity set": the number of equally-plausible whole answers, even when the true count is
-far larger. At the uniform prior it equals `log2(C(|Q|,|R|)) / |R|`; `C(700, 70) ≈ 3.4 × 10^97`, more
-candidate subsets than atoms in the observable universe, computed exactly by the running-total method
-above rather than by listing them.
-
-**Truth bits** is `-log2 P(the true R)`, capped at the same ceiling: how much probability the belief
-assigned to the actual answer. If the belief is honest — statisticians call this *calibrated* — the
-two should track each other closely over many independent draws, because that is what "the belief's
-probabilities are trustworthy" means numerically. Rows 10 and 11 of the calibration suite agree to
-within 0.01 bits per real address. Row 12 disagrees by 0.21 bits: there the model believes it learned
-0.28 bits per address (`joint/R` 4.64 → 4.36 against the ceiling), yet its actual guesses land at
-9.27% precision, *below* the 10% chance rate — a sign the model is fitting noise in its 30 training
-worlds rather than a real signal, which precision alone wouldn't reveal.
-
-**A known limitation, found by measurement rather than assumed:** joint entropy is sensitive to how
-addresses are grouped into first-seen cohorts, in a way that doesn't track actual exposure. Take two
-1,000-address queries, each with 100 real addresses, scored with no structural evidence at all:
-
-| Query | Precision | Joint entropy per real address |
-|---|---|---|
-| All 100 real addresses first seen together, one cohort of 1,000 | 10.00% | 4.64 bits |
-| Each real address first seen in its own round, with 9 fresh decoys — a wallet paying into new addresses over time | 10.00% | 3.32 bits |
-
-Every address is equally exposed in both cases — 10% precision, exactly chance — but the joint number
-reports the first as more private. It is counting the ways to name the *entire* 100-address set
-exactly (there are more ways to choose 100 of 1,000 than to choose 1 from each of 100 separate groups
-of 10), which is a real quantity, but not one that changes how safe any individual address is. Left
-running over a long-lived wallet, whose real addresses do get revealed one at a time exactly like the
-second row, this number would drift downward and look like a privacy loss that isn't actually
-happening. That is why it is kept only as a check, next to truth bits, rather than reported as a
-privacy number on its own — see "Open questions" below for where a corrected, whole-wallet version of
-this metric belongs.
-
-### Dropped: mean per-address entropy, its rescaled form, and the set-size proxy
-
-Three metrics were implemented, measured, and removed. No code for them remains; the reasons stay so
+Six metrics were implemented, measured, and removed. No code for them remains; the reasons stay so
 nobody re-adds them without rediscovering the problem.
 
+- **Adversary advantage**, `precision - chance`, can't tell a well-protected wallet from a fully
+  exposed one. Plain Electrum gives `100% - 100% = 0`, and the ceiling at padding 10 gives
+  `10% - 10% = 0`. Precision in bits gives `0.00` and `3.32` for the same two, which is the
+  distinction a headline number needs to make. Its one strength, that "twice as good as guessing"
+  needs no logarithm, is kept by printing precision and chance side by side.
+- **Joint entropy** is the entropy of the belief over which *whole subset* of `Q` is real, reported
+  per real address. At the uniform prior it equals `log2(C(|Q|,|R|)) / |R|`. It is sensitive to how
+  addresses are grouped into first-seen cohorts, in a way that doesn't track actual exposure. Take
+  two 1,000-address queries, each with 100 real addresses, scored with no structural evidence at all:
+
+  | Query | Precision | Joint entropy per real address |
+  |---|---|---|
+  | All 100 real addresses first seen together, one cohort of 1,000 | 10.00% | 4.64 bits |
+  | Each real address first seen in its own round, with 9 fresh decoys — a wallet paying into new addresses over time | 10.00% | 3.32 bits |
+
+  Every address is equally exposed in both cases — 10% precision, exactly chance — but joint entropy
+  reports the first as more private. It counts the ways to name the *entire* 100-address set exactly.
+  There are more ways to choose 100 of 1,000 than to choose 1 from each of 100 separate groups of
+  10. That is a real quantity, but not one that changes how safe any individual address is. Over a
+  long-lived wallet, whose real addresses are revealed one at a time like the second row, it would
+  drift downward and look like a privacy loss that isn't happening.
+- **Truth bits**, `-log2 P(the true R)`, is how much probability the belief gave the actual answer.
+  It was kept with joint entropy as a check that the attacker's belief is honest: the two should
+  agree over many draws. On every session the repo can now score they agree exactly — 4.64 and 4.64
+  on the padded session, 0.00 and 0.00 on the plain one — so the pair added columns without adding
+  information about the wallet.
 - **Mean per-address entropy**, `H(p) = -p·log2(p) - (1-p)·log2(1-p)` averaged over every address in
   `Q`, falls as padding rises: at the uniform prior it equals `H(1/padding)` — `1.00` bit at padding
   2, `0.47` at 10, `0.29` at 20. More privacy reads as a lower number, backwards for a metric meant to
   track a defence getting stronger.
 - **Its rescaled form** (the same sum divided by `|R|` instead of `|Q|`) does rise with padding, but
   it is still a sum of independent per-address terms, so it can't see whether the remaining doubt is
-  spread out or concentrated in a group. On the two queries in the table above it reads `4.69` for
-  both, while joint entropy, which does see the difference, reads `4.64` and `3.32`.
+  spread out or concentrated in a group. On the two queries in the joint-entropy table above it reads
+  `4.69` for both.
 - **The set-size proxy**, `log2(surviving candidates / |R|)`, Week 0's first metric, adds nothing
   precision in bits doesn't. When the only evidence is ruling candidates out, as in the intersection
   attack, precision among `S` equally likely survivors is `|R| / S`, so precision in bits is
-  `log2(S / |R|)`: the same number (checked on `python3 -m attack strategies`'s setting, equal to
-  within 1.6×10⁻¹⁶). When the evidence is uneven, the proxy ignores it: with the structural attack on
-  careless chain decoys it still read the full 3.32 bits while precision was 79.85%. Removed.
+  `log2(S / |R|)`: the same number. When the evidence is uneven, the proxy ignores it: the structural
+  attack rules nothing out, so on careless chain decoys the proxy still reads the full 3.32 bits
+  while precision is above 60% (`tests/test_a2.py`). Removed.
 
 ### Reporting
 
 Precision, in bits and as a percentage, next to the chance rate it's measured against, is the
-headline: it's what a judge can check by hand, and no attack in the suite can make it look better
-than reality without actually getting guesses right. Joint entropy and truth bits are reported
-alongside it as a calibration check on the belief itself, not as a second privacy number — a gap
-between them is a warning that the attack model is overconfident, as the case above shows. Adversary
-advantage is kept as a secondary column, for the reason it used to be considered as the headline:
-restating a specific gain as "twice as good as guessing" needs no logarithm.
+headline. A judge can check it by hand, and no attack can make it look better than reality without
+actually getting guesses right.
 
-**Precision among funded addresses.** This is the same precision, restricted to
-the scripthashes the server reports history for. The attacker takes its top `|F|` guesses among
-them, where `F` is the funded reals, and the chance rate is `|F|` divided by the number with history.
-It exists because the headline averages over every real address, and the unused tail dominates.
+**Precision among funded addresses** is the same precision, restricted to the scripthashes the server
+reports history for. The attacker takes its top `|F|` guesses among them, where `F` is the funded
+reals, and the chance rate is `|F|` divided by the number with history. It exists because the
+headline averages over every real address, and the unused tail dominates. It is always printed
+beside the headline, as `funded bits` and `funded %`.
 
-**How results are presented.** Precision in bits stays the headline, and
-precision among funded addresses is always printed beside it.
-
-None of this is combined into one number. Averaging or weighting these together would mean choosing
-weights, and that choice is itself a place a result could end up looking better than it is. Keeping
-them separate means each checks the others: precision moving while the calibration check doesn't (or
-the reverse) is itself a signal worth noticing.
+The two are not combined into one number. Averaging or weighting them together would mean choosing
+weights, and that choice is itself a place a result could end up looking better than it is.
 
 ---
 
@@ -279,22 +246,21 @@ of what was open and why, in the style of `docs/02-design.md`'s resolved sync-in
    and `|R|` slots (`_esp_rows`, `attack/posterior.py`), checked against brute-force enumeration on
    300 random small cases (`tests/test_posterior.py`) and against the closed form for the uniform case
    at `n = 400, k = 40`. What wasn't anticipated: the metric is exact and cheap, but it turned out not
-   to measure what it was meant to on its own — see the grouping limitation under "the calibration
-   check," above. It stays, but only as a check next to truth bits, not as a privacy number by itself.
+   to measure what it was meant to — see joint entropy under "Dropped metrics," above.
 3. **Does the adversary know `|R|`?** Yes, and not only as a scoring convenience. `docs/01-threat-model.md`
    already grants the adversary the wallet software's behaviour, including the gap limit; every sync
    being a full scan (`docs/02-design.md`, "haystack-electrum") means a never-paid
    wallet's real count is fixed by the gap limit alone, and the capture fixture confirms it: all 6 real
-   rounds hold exactly 100 scripthashes. `attack/harness.py`'s `knowledge()` grants the attacker the
+   rounds hold exactly 100 scripthashes. `attack/scoring.py`'s `knowledge()` grants the attacker the
    real count per first-seen cohort, consistent with this.
 4. **How does each adversary level map to a distinct `p(s)`-producing model?** There is one model, not
    one per level. A level just switches which evidence is available to it (`attack()`,
-   `attack/harness.py`): the single-round level gets none, the many-rounds level gets persistence and
+   `attack/scoring.py`): the single-round level gets none, the many-rounds level gets persistence and
    activation, the structural level adds the classifier's weights on top. `docs/02-design.md`'s "A note
-   on adversary strength" states the levels; this document and `attack/harness.py` state which evidence
+   on adversary strength" states the levels; this document and `attack/scoring.py` state which evidence
    each one turns on. Two things this mapping made visible that weren't obvious before it was written
    down: query order is judged only at the structural level, even though the threat model grants order
-   from the first round, so a good many-rounds score should not be read as meaning order is safe (the
-   "reals sent first" row above is the direct check); and the many-rounds level's evidence is three
+   from the first round, so a good many-rounds score should not be read as meaning order is safe
+   (`tests/test_a2.py`'s reals-first test is the direct check); and the many-rounds level's evidence is three
    things, not one — persistence, cohort counts, and activation — where the original open question and
    the design note both described it in looser terms.

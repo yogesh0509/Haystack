@@ -16,8 +16,7 @@ def brute(items, logw, k, forced):
     z = sum(weights.values())
     probs = {t: w / z for t, w in weights.items()}
     marginal = {s: sum(p for t, p in probs.items() if s in t) for s in items}
-    entropy = -sum(p * math.log(p) for p in probs.values() if p > 0)
-    return probs, marginal, entropy, math.log(z)
+    return marginal, math.log(z)
 
 
 class BlockTest(unittest.TestCase):
@@ -35,22 +34,19 @@ class BlockTest(unittest.TestCase):
                 with self.assertRaises(Infeasible):
                     Block(items, lw, k, forced)
                 continue
-            probs, marginal, entropy, log_z = expected
+            marginal, log_z = expected
             b = Block(items, lw, k, forced)
             for s in items:
                 self.assertAlmostEqual(b.marginal[s], marginal[s], places=9)
-            self.assertAlmostEqual(b.entropy_nats, entropy, places=9)
             self.assertAlmostEqual(b.log_evidence, log_z, places=9)
-            for subset, p in probs.items():
-                self.assertAlmostEqual(b.log_prob(subset), math.log(p), places=9)
 
     def test_dp_agrees_with_closed_form_at_scale(self):
         n, k = 400, 40
         items = [f"s{i}" for i in range(n)]
         uniform = Block(items, [0.3] * n, k)
         perturbed = Block(items, [0.3 + 1e-9 * (i % 2) for i in range(n)], k)
-        self.assertAlmostEqual(uniform.entropy_nats, log_comb(n, k), places=9)
-        self.assertAlmostEqual(perturbed.entropy_nats, uniform.entropy_nats, places=5)
+        self.assertAlmostEqual(uniform.log_evidence, log_comb(n, k) + 0.3 * k, places=9)
+        self.assertAlmostEqual(perturbed.log_evidence, uniform.log_evidence, places=5)
         for s in items[:5]:
             self.assertAlmostEqual(perturbed.marginal[s], k / n, places=6)
 
@@ -68,22 +64,15 @@ class PosteriorTest(unittest.TestCase):
         b1 = Block(["a", "b", "c"], [0.0, 1.0, -1.0], 1)
         b2 = Block(["d", "e"], [0.5, 0.5], 1)
         post = Posterior([b1, b2])
-        truth = {"b", "d"}
-        self.assertAlmostEqual(post.log2_prob(truth) * math.log(2),
-                               b1.log_prob(truth) + b2.log_prob(truth), places=12)
-        self.assertAlmostEqual(post.entropy_bits * math.log(2), b1.entropy_nats + b2.entropy_nats, places=12)
-        self.assertEqual(post.log2_prob({"b", "z"}), NEG_INF)
+        self.assertEqual(post.marginal, {**b1.marginal, **b2.marginal})
+        self.assertAlmostEqual(post.log_evidence, b1.log_evidence + b2.log_evidence, places=12)
 
-    def test_mixture_weights_bounds_and_truth(self):
+    def test_mixture_weights_and_marginals(self):
         items = ["a", "b", "c", "d"]
         p1 = Posterior([Block(items, [2.0, 0.0, 0.0, 0.0], 2)])
         p2 = Posterior([Block(items, [0.0, 0.0, 0.0, 2.0], 2)])
         mix = Mixture([(math.log(0.7), p1), (math.log(0.3), p2)])
         self.assertAlmostEqual(sum(mix.weights), 1.0, places=12)
-        self.assertLessEqual(mix.entropy_bits, mix.entropy_upper_bits)
-        truth = {"a", "b"}
-        manual = sum(w * 2 ** p.log2_prob(truth) for w, p in zip(mix.weights, mix.posteriors))
-        self.assertAlmostEqual(2 ** mix.log2_prob(truth), manual, places=12)
         for s in items:
             self.assertAlmostEqual(mix.marginal[s], sum(w * p.marginal[s] for w, p in
                                                         zip(mix.weights, mix.posteriors)), places=12)

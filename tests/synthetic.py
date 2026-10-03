@@ -1,11 +1,8 @@
-"""Seeded synthetic rounds; the feature distributions are assumptions for exercising A2, not chain measurements."""
+"""Seeded synthetic wallets and decoys for the tests; the feature distributions are assumptions, not chain measurements."""
 import random
 from dataclasses import dataclass
 
-from .observe import Fact, Observation, Round
-
-STRATEGIES = ("plain", "fresh", "epoch", "fixed", "append")
-DECOY_KINDS = ("chain", "random", "wallets")
+from attack.observe import Fact, Observation, Round
 
 WALLET_TYPES = (("p2wpkh", 0.60), ("p2tr", 0.20), ("p2sh", 0.12), ("p2pkh", 0.08))
 CHAIN_TYPES = (("p2wpkh", 0.45), ("p2pkh", 0.22), ("p2sh", 0.20), ("p2tr", 0.13))
@@ -35,9 +32,7 @@ def pad(real_rounds, strategy, padding, pool, seed=0, epoch_len=3, order="shuffl
     def draw(key, k):
         return random.Random(f"{seed}:{strategy}:{key}").sample(pool, k)
 
-    if strategy == "plain":
-        decoys = [[] for _ in range(rounds)]
-    elif strategy == "fresh":
+    if strategy == "fresh":
         decoys = [draw(t, n[t]) for t in range(rounds)]
     elif strategy == "epoch":
         decoys = []
@@ -47,10 +42,6 @@ def pad(real_rounds, strategy, padding, pool, seed=0, epoch_len=3, order="shuffl
             decoys.append(draw(f"epoch{e}", max(n[u] for u in span))[: n[t]])
     elif strategy == "fixed":
         decoys = [draw("fixed", n[0])] * rounds
-    elif strategy == "append":
-        # Prefixes of one seeded stream: deterministic, never withdrawn, and growing with every new real.
-        stream = draw("append", max(n))
-        decoys = [stream[: n[t]] for t in range(rounds)]
     else:
         raise ValueError(f"unknown strategy {strategy}")
 
@@ -84,19 +75,15 @@ class Wallet:
     wallet_type: str
 
 
-def synthetic_wallet(rng, n_rounds, stop_gap=20, pay_prob=0.0, wallet_type=None):
-    """Used addresses plus a gap-limit tail per keychain; a payment uses the first unused address."""
+def synthetic_wallet(rng, n_rounds, stop_gap=20, wallet_type=None):
+    """Used addresses plus a gap-limit tail per keychain."""
     wtype = wallet_type or pick(rng, WALLET_TYPES)
     used_ext, used_int = int(rng.expovariate(1 / 8)), int(rng.expovariate(1 / 5))
     ext = [random_scripthash(rng) for _ in range(used_ext + stop_gap)]
     chg = [random_scripthash(rng) for _ in range(used_int + stop_gap)]
     tx = {s: pick(rng, WALLET_TX) for s in ext[:used_ext] + chg[:used_int]}
     rounds, facts = [], []
-    for t in range(n_rounds):
-        if t > 0 and rng.random() < pay_prob:
-            tx[ext[used_ext]] = 1
-            used_ext += 1
-            ext.append(random_scripthash(rng))
+    for _ in range(n_rounds):
         r = ext + chg
         rounds.append(r)
         facts.append({s: Fact(tx.get(s, 0), wtype if tx.get(s, 0) else None) for s in r})
@@ -143,10 +130,3 @@ def world(seed, kind, padding, order="shuffle", stop_gap=20):
         rng.shuffle(q)
     return Observation([Round(q, {**w.facts[0], **decoys})]), frozenset(w.rounds[0])
 
-
-def growing(seed, strategy, padding, n_rounds=12, pay_prob=0.5, stop_gap=20, pool_size=100_000):
-    """A wallet receiving payments over rounds, padded with random-scripthash decoys."""
-    w = synthetic_wallet(random.Random(f"grow:{seed}"), n_rounds, stop_gap, pay_prob)
-    queries = pad(w.rounds, strategy, padding, random_pool(pool_size, seed), seed)
-    facts = [{**{s: Fact(0) for s in q}, **f} for f, q in zip(w.facts, queries)]
-    return observe(queries, facts), w.rounds

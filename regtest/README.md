@@ -71,6 +71,15 @@ and none for any decoy.
 This is the only test of confirmed transactions. Making Haystack drop every confirmation anchor
 leaves all 43 in-memory tests passing, and fails this one at round 1.
 
+## Mempool evictions (`tests/eviction.rs`)
+
+A full scan can't tell when an unconfirmed transaction has left the mempool; upstream's `sync` can,
+because its request lists the transactions the wallet expects. This test has the node pay a fresh
+wallet 0.02 BTC unconfirmed, scans it into three copies, then double-spends the same coins back to
+the node with a higher fee. After the next scan, upstream's `sync` and Haystack's
+`full_scan_expecting` at padding 10 must both drop the 0.02 and agree on the balance, while a plain
+Haystack `full_scan` must still count it, which shows the gap the expectations close.
+
 ## Training sessions and the bandwidth curve (`src/bin/sessions.rs`)
 
 Week 3's structural attacker learns from labelled sessions of other wallets (`docs/04-roadmap.md`,

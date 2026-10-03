@@ -3,6 +3,7 @@ name = "haystack-capture"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "GPL-3.0-only"
 description = "Run real bdk_wallet full scans against an Electrum endpoint and record the wallet's own view of what it queried."
 
 [dependencies]

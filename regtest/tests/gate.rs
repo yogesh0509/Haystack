@@ -88,7 +88,7 @@ fn padded_round(
         .map_err(|e| format!("{e:?}"))?
         .with_saved_cache(cache)
         .with_session_log(log.clone());
-    let update = client.full_scan(wallet.start_full_scan(), STOP_GAP, 50, false)?;
+    let update = client.full_scan(wallet.start_full_scan(), STOP_GAP, 5, false)?;
     wallet.apply_update(update)?;
     let cache = client.saved_cache();
     Ok((client.into_ledger(), cache))

@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use bdk_wallet::Wallet;
 use haystack_electrum::cache_file::SavedCache;
 use haystack_electrum::chain::ChainDecoys;
-use haystack_electrum::client::{recommended_batch_size, HaystackElectrumClient};
+use haystack_electrum::client::HaystackElectrumClient;
 use haystack_electrum::ledger::Ledger;
 use haystack_electrum::session::{JsonLinesFile, CLIENT_SOURCE, CLIENT_VERSION};
 use haystack_regtest::population::{assumptions, next_unused_external, random_history};
@@ -166,7 +166,7 @@ fn main() -> Result<(), Error> {
                 let update = client.full_scan(
                     track.wallet.start_full_scan(),
                     STOP_GAP,
-                    recommended_batch_size(p),
+                    5,
                     false,
                 )?;
                 let (sent, received) = proxy.take();

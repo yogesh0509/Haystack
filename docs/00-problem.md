@@ -1,13 +1,13 @@
 # The problem
 
 Every claim below has a command next to it. Run them. The outputs in §1 and §2 were captured
-against live infrastructure. The outputs in §4 and §6 were regenerated
-with this repo's own tools: `capture/`, which runs real scans with the published `bdk_wallet` 2.1.0
-the project builds against, and `python3 -m attack strategies`, the project's own attacker.
+against live infrastructure. The output in §4 was regenerated with `capture/`, which runs real scans
+with the published `bdk_wallet` 2.1.0 the project builds against. The results in §6 are checked by
+`tests/test_regression.py`, which runs the project's own attacker.
 
 Each section states a claim and gives the command that verifies it, so nothing here needs to be taken
 on faith. For how each script works, see `scripts/README.md`; the decoy strategies of §6 are `pad()`
-in `attack/synth.py`.
+in `tests/synthetic.py`.
 
 ---
 
@@ -85,7 +85,9 @@ python3 scripts/electrum_probe.py --address bc1qw508d6qejxtdg4y5r3zarvary0c5xw7k
 ```
 
 You can swap servers with `--server fortress.qtornado.com:50002` and get the same result from a
-different operator. There is nothing special about Blockstream's instance.
+different operator. There is nothing special about Blockstream's instance. The probe switches
+certificate checks off (`ssl.CERT_NONE`), because many Electrum servers use self-signed
+certificates; the Rust client's certificate policy is in `docs/04-roadmap.md`, Week 4.
 
 ---
 
@@ -135,9 +137,9 @@ addresses 0–49, and the last 50 are change addresses 0–49 — labelled by or
 chain analysis would normally have to guess which output of a transaction is the change.
 
 To confirm the captured scripthashes are the wallet's own: `capture/` records what the wallet itself
-sent, independently of any server, and `python3 -m attack tripwire --honeypot honeypot-log.json
---capture capture-truth.json` checks the two against each other. On the scan above they match
-exactly, in the same order.
+sent, independently of any server, and `tests/test_plain_capture.py` checks the two against each
+other on the committed copy of this scan (`tests/fixtures/`). They match exactly: the same 100
+scripthashes in every round, none extra and none missing.
 
 **Note on the lie.** The honeypot always answers empty so the scan runs to completion in one clean
 burst — a measurement convenience, not the threat being modeled. A real server can't lie wholesale
@@ -172,40 +174,33 @@ Your real addresses appear in **every** round. Independently sampled decoys appe
 server that watches you sync a few times intersects the query sets and what survives is your wallet.
 
 ```bash
-python3 -m attack strategies
+python3 -m unittest -v tests.test_regression
 ```
 
-```
-real addresses : 70
-decoys / round : 630  (10x bandwidth)
-decoy pool     : 100000
-baseline       : plain Electrum sends 70 scripthashes, 0.00 bits
-each cell      : scripthashes not yet ruled out (precision in bits), many-rounds attacker
+The test pads a 100-address wallet at 10× (900 decoys a round, drawn from a pool of 100,000) under
+three decoy strategies and runs the many-rounds attacker (`attack/a1_many_rounds.py`), the same one every score
+in this repo comes from. It scores each round in precision bits, the headline metric of
+`docs/03-metric.md`: `log2(10) = 3.32` bits means the attacker does no better than chance, and `0.00`
+means it has found the wallet. Over five random draws, it asserts:
 
- round |              fresh |            epoch/3 |              fixed
-------------------------------------------------------------------------
-     1 |    700 (3.32 bits) |    700 (3.32 bits) |    700 (3.32 bits)
-     2 |     72 (0.04 bits) |    700 (3.32 bits) |    700 (3.32 bits)
-     3 |     70 (0.00 bits) |    700 (3.32 bits) |    700 (3.32 bits)
-     4 |     70 (0.00 bits) |     73 (0.06 bits) |    700 (3.32 bits)
-     5 |     70 (0.00 bits) |     73 (0.06 bits) |    700 (3.32 bits)
-     6 |     70 (0.00 bits) |     73 (0.06 bits) |    700 (3.32 bits)
-```
+- **`fresh`** redraws every decoy each round. It reads 3.32 bits in round 1 and at most 0.10 bits from
+  round 3 on.
+- **`epoch/3`** keeps decoys for three rounds, then redraws. It reads 3.32 bits through round 3 and
+  at most 0.25 bits in round 4, the first round of the second epoch.
+- **`fixed`** sends the same decoys forever. It reads 3.32 bits in every round.
 
-Each cell is how many scripthashes the attacker hasn't yet ruled out, and precision in bits — the
-headline metric of `docs/03-metric.md`. The attacker is the same one every score in this repo comes
-from (`attack/a1.py`). `fresh` redraws every decoy each round; `epoch/3` keeps decoys for three rounds,
-then redraws; `fixed` sends the same decoys forever. Append-only — adding decoys for new addresses,
-never withdrawing one — is identical to `fixed` for a wallet that isn't growing, so it has no column
-here; for a wallet that is, see the "append-only, per-increment padding" rows of
-`python3 -m attack calibrate`.
+Append-only — adding decoys for new addresses, never withdrawing one — is identical to `fixed` for a
+wallet that isn't growing. For a wallet that is, `tests/test_a1.py` checks that a new address padded
+with its own decoys stays at the 10% chance rate, and one added without them is exposed.
 
-Read the `fresh` column. Ten-times padding buys **three rounds**, then collapses to exactly the real
-set. That matches the analytic prediction: a decoy survives round `r` only if it was drawn every
-time, so the expected survivors after `r` rounds are `k^r / |U|^(r-1)` for `k` decoys a round from a
-pool of `|U|` — `630² / 100000 = 3.97` after round two. This draw leaves 2; forty draws average 4.42
-(`--seed` picks the draw). These numbers assume decoys are otherwise indistinguishable from real
-addresses, so they are an upper bound on what a strategy can deliver, not a measurement of it.
+Ten-times padding with fresh decoys buys **three rounds**, then collapses to exactly the real set.
+That matches the analytic prediction. A decoy survives round `r` only if it was drawn every time, so
+the expected survivors after `r` rounds are `k^r / |U|^(r-1)` for `k` decoys a round from a pool of
+`|U|`. After round two that is `900² / 100000 = 8.1` decoys left among the 100 reals, so precision is
+about `100 / 108.1 = 92.5%`, or `-log2(0.925) = 0.11` bits. After round three it is
+`900³ / 100000² = 0.07` decoys: almost always none, which is the 0.00 bits the test sees. These
+numbers assume decoys are otherwise indistinguishable from real addresses, so they are an upper bound
+on what a strategy can deliver, not a measurement of it.
 
 Three conclusions shape the rest of the design, each the opposite of the naive instinct:
 

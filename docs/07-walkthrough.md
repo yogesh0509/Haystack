@@ -15,8 +15,8 @@ Two kinds of wallet appear:
 
 The score in every table is the attacker's **precision**. The attacker guesses as many
 scripthashes as the wallet really has, and precision is the share of those guesses that are right.
-`prec-b` turns it into bits: 0.00 means every guess was right, and `log2(padding)` (3.32 at padding
-10) means the guesses were no better than random. `fund%` is the same precision restricted to the
+The `bits` column converts it: 0.00 means every guess was right, and `log2(padding)` (3.32 at padding
+10) means the guesses were no better than random. `funded %` is the same precision restricted to the
 scripthashes that have history, which are the funded addresses. `docs/03-metric.md` has the full
 definitions.
 
@@ -50,11 +50,11 @@ python3 -m attack score --honeypot out/plain-honeypot.json --capture out/plain-t
 connections. The score is 0.00 bits and 100% precision in every round: every guess is right.
 
 ```
-  round   |R|    |Q|  prec-b   prec% chance% joint/R truth/R     adv  fund-b   fund%
-      1   100    100    0.00  100.00  100.00    0.00    0.00    0.00      --      --
+  sync  real (|R|)  scripthashes (|Q|)  bits  precision %  chance %  funded bits  funded %
+     1         100                 100  0.00       100.00    100.00           --        --
 ```
 
-**What it means.** The query *is* the wallet. `fund%` reads `--` because this wallet has no funded
+**What it means.** The query *is* the wallet. `funded %` reads `--` because this wallet has no funded
 addresses.
 
 ## Case 2: random decoys fail after a few syncs
@@ -63,11 +63,12 @@ addresses.
 Real addresses appear every time and fresh decoys don't.
 
 ```bash
-python3 -m attack strategies
+python3 -m unittest -v tests.test_regression
 ```
 
-**What you should see.** The `fresh` column falls from 700 candidates (3.32 bits) to the 70 real
-addresses (0.00 bits) by round 3. The `fixed` column stays at 700 (3.32 bits) in every round.
+**What you should see.** Three tests, each ending in `ok`. They pad a 100-address wallet at 10×.
+Freshly redrawn decoys start at 3.32 bits and fall to at most 0.10 bits by round 3, once the
+attacker has found the 100 real addresses. Fixed decoys stay at 3.32 bits in every round.
 
 **What it means.** Decoys must be fixed per wallet and never withdrawn. `docs/00-problem.md` §6
 explains why.
@@ -91,8 +92,8 @@ python3 -m attack score --session out/padded-session.jsonl --honeypot out/padded
 score sits at the 3.32-bit ceiling, 10% precision against 10% chance, in every round:
 
 ```
-  round   |R|    |Q|  prec-b   prec% chance% joint/R truth/R     adv  fund-b   fund%
-      1   100   1000    3.32   10.00   10.00    4.64    4.64    0.00      --      --
+  sync  real (|R|)  scripthashes (|Q|)  bits  precision %  chance %  funded bits  funded %
+     1         100                1000  3.32        10.00     10.00           --        --
 ```
 
 `score` first checks the client's session log against the honeypot's own log and refuses if they
@@ -106,14 +107,18 @@ addresses from decoys, because neither has any transactions.
 **What it shows.** On the paid regtest wallet, a padded scan and a plain `bdk_electrum` scan leave
 the wallet identical: balance, transactions with their confirmation blocks, unspent coins,
 derivation indices and chain tip. It runs three rounds: the history, a new block plus a payment, and
-a one-block reorganisation. The padded client carries its saved cache through all three.
+a one-block reorganisation. The padded client carries its saved cache through all three. A second
+test double-spends an unconfirmed payment to the wallet: upstream's `sync` and Haystack's
+`full_scan_expecting` must both stop counting it and end with the same balance.
 
 ```bash
 cargo test -p haystack-regtest -- --nocapture
 ```
 
 **What you should see.** The wallet's story printed line by line, then
-`test padded_scans_leave_the_wallet_exactly_as_plain_scans_do ... ok`. It takes about 20 seconds.
+`test padded_scans_leave_the_wallet_exactly_as_plain_scans_do ... ok` and
+`test a_payment_dropped_from_the_mempool_leaves_the_balance_as_after_upstreams_sync ... ok`. It
+takes about 30 seconds.
 
 **What it means.** Privacy costs bandwidth, never correctness.
 
@@ -156,12 +161,12 @@ handed over.
 python3 -m attack score --session out/sessions/p10-c0/demo.jsonl --train out/sessions/p10-c0 --tier T2
 ```
 
-**What you should see.** The headline reads about 2.4 to 3.1 bits, but `fund%` reads 100%:
+**What you should see.** The headline reads about 2.4 to 3.1 bits, but `funded %` reads 100%:
 
 ```
-  round   |R|    |Q|  prec-b   prec% chance% joint/R truth/R     adv  fund-b   fund%
-      1   133   1330    2.93   13.08   10.00    4.46    4.45    0.03    0.00  100.00
-      2   134   1340    2.42   18.63   10.00    4.43    4.41    0.09    0.00  100.00
+  sync  real (|R|)  scripthashes (|Q|)  bits  precision %  chance %  funded bits  funded %
+     1         133                1330  2.93        13.08     10.00         0.00    100.00
+     2         134                1340  2.42        18.63     10.00         0.00    100.00
 ```
 
 **What it means.** This is Haystack's main limitation, and the reason the funded column exists.
@@ -188,13 +193,13 @@ limitation (`docs/02-design.md`, A1).
 python3 -m attack score --session out/sessions/p10-c10/demo.jsonl --train out/sessions/p10-c10 --tier T2
 ```
 
-**What you should see.** `fund%` falls from 100% to roughly 12 to 28%, against a chance rate near
+**What you should see.** `funded %` falls from 100% to roughly 12 to 28%, against a chance rate near
 10%:
 
 ```
-  round   |R|    |Q|  prec-b   prec% chance% joint/R truth/R     adv  fund-b   fund%
-      1   133   1330    2.90   13.41   10.00    4.63    4.62    0.03    3.00   12.50
-      2   134   1340    3.32    9.40   10.00    4.60    4.60   -0.01    2.17   22.22
+  sync  real (|R|)  scripthashes (|Q|)  bits  precision %  chance %  funded bits  funded %
+     1         133                1330  2.90        13.41     10.00         3.00     12.50
+     2         134                1340  3.32         9.40     10.00         2.17     22.22
 ```
 
 **What it means, and what it doesn't.** A tenth of the decoys are now real addresses from the chain
@@ -270,7 +275,10 @@ default paddings 1, 2, 5, 10 and 20 and chain shares 0, 10% and 30%) takes about
 
 **What it shows.** The never-paid wallet padded against a public server instead of the honeypot.
 This sends the demo wallet's padded query to a third party, so it is opt-in. It was last run in
-Week 2 (`docs/04-roadmap.md`) and not re-run for this walkthrough.
+Week 2 (`docs/04-roadmap.md`) and not re-run for this walkthrough. A self-signed server such as
+`fortress.qtornado.com` needs the demo wallet's certificate policy instead, which pins the
+certificate on first use: `cargo run --release -p haystack-demo -- --url
+ssl://fortress.qtornado.com:50002`, then press Sync on `http://127.0.0.1:7878` (Week 4).
 
 ```bash
 ./target/release/haystack-capture --url ssl://electrum.blockstream.info:50002 --rounds 1 \

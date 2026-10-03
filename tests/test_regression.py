@@ -2,8 +2,8 @@
 import math
 import unittest
 
-from attack.calibrate import per_round
-from attack.synth import extend, observe, pad, random_pool
+from attack.scoring import per_round
+from tests.synthetic import extend, observe, pad, random_pool
 
 REAL = [random_pool(100, seed="regression")]
 POOL = random_pool(100_000)
@@ -36,20 +36,6 @@ class HoldsTest(unittest.TestCase):
     def test_fixed_decoys_stay_at_the_ceiling(self):
         for s in scores("fixed", 6, 0):
             self.assertAlmostEqual(s.precision_bits, TOP, places=9)
-
-
-class StrategiesTableTest(unittest.TestCase):
-    """`python3 -m attack strategies` is step 4 of the README's five-minute check."""
-
-    def test_reproduces_docs_00_problem_section_6(self):
-        from attack.calibrate import strategies
-        rows = [line.split("|")[1:] for line in strategies().splitlines() if line[:6].strip().isdigit()]
-        fresh, epoch, fixed = zip(*rows)
-        self.assertEqual(len(rows), 6)
-        self.assertTrue(all("700 (3.32 bits)" in c for c in fixed))
-        self.assertTrue(all("70 (0.00 bits)" in c for c in fresh[2:]))
-        self.assertTrue(all("700 (3.32 bits)" in c for c in epoch[:3]))
-        self.assertNotIn("3.32", epoch[3])
 
 
 if __name__ == "__main__":
