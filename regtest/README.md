@@ -103,6 +103,14 @@ python3 -m attack curve --dir regtest/sessions
   `p<padding>-c<percent>/`. Chain decoys are found through the same electrs
   (`haystack_electrum::chain`), so they are the other wallets' and the node's addresses. This small
   chain runs out of candidates above about 200 chain decoys.
+- **The folder names** say how each set of sessions was made. `p` is the padding factor, how many
+  scripthashes the server receives per real address: `p1` is a plain sync with no decoys, and `p10`
+  sends 9 decoys per real address. `c` is the percentage of decoys taken from the chain, meaning real
+  addresses that have history: `c0` means none, so no decoy has history, and `c10` means a tenth do.
+  So `p1-c0` is the plain baseline, `p10-c0` is padding 10 with history-free decoys, and `p10-c10` is
+  padding 10 with a tenth chain decoys. A scored session is paired with the training folder of the
+  same name, because the attacker learns what real and decoy addresses look like under the scheme it
+  is attacking.
 - **A relay counts every byte** between the client and electrs (`src/proxy.rs`), giving
   `bandwidth.json`. It counts application bytes only: no TCP/IP headers, and no TLS, which regtest
   doesn't use.

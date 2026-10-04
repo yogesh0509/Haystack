@@ -233,7 +233,7 @@ weights, and that choice is itself a place a result could end up looking better 
 ## Open questions — resolved
 
 The four questions below shaped the metric's definition. All four are closed; kept here as the record
-of what was open and why, in the style of `docs/02-design.md`'s resolved sync-integration questions.
+of what was open and why.
 
 1. **How does a hard-elimination attack produce a probability?** It doesn't need to, on its own. A
    hard elimination is a weight of 0, one piece of evidence among however many an attack level

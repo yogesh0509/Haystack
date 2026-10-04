@@ -1,25 +1,3 @@
-//! `HaystackElectrumClient`: `BdkElectrumClient::full_scan` with decoys.
-//!
-//! Same caches, chain-tip handling and merkle-proof checks as `bdk_electrum` 0.23.2. It differs by
-//! driving the scan in stages via the planner: each stage sends every real script together with its
-//! frozen decoys in shuffled batches, and only real answers reach the response.
-//!
-//! No `populate_tx_cache` either: a cache filled from the wallet's own transactions holds reals only,
-//! and after a restart the decoys alone would be refetched (`cache_file.rs`). The client's caches are
-//! filled only by what it fetches, and `with_saved_cache` / `with_cache_store` keep them across
-//! restarts.
-//!
-//! No `sync` and no `transaction_broadcast`. Every sync is a full scan, since a revealed-only sync
-//! would drop the unused tail and its decoys, and broadcasting through this session's server would
-//! tie the transaction to it (`docs/01-threat-model.md`).
-//!
-//! A full scan alone can't tell when an unconfirmed transaction has left the mempool: upstream's
-//! `sync` learns that from the wallet's list of expected transactions, which a full-scan request
-//! doesn't carry. `full_scan_expecting` takes that list, from the same
-//! `wallet.start_sync_with_revealed_spks()` an app passed to `sync`, and marks every expected
-//! transaction missing from its real address's history as evicted, as upstream does. The list is
-//! used locally only; nothing extra is sent.
-
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use bdk_core::bitcoin::{block::Header, BlockHash, ScriptBuf, Transaction, Txid};

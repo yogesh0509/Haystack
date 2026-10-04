@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn payment_to_index_3_extends_to_53() {
-        // docs/02-design.md, diagram 3's third sync.
+        // docs/02-design.md, diagram 2's third sync.
         let mut p = RoundPlanner::new(50, BOTH, &ledger_with(50), &test_key()).unwrap();
         assert_eq!(p.next_stage().len(), 100);
         for k in BOTH {

@@ -17,17 +17,17 @@ descriptors, talks to the Electrum server and writes the ledger; the page only d
 
 ## Running it
 
-Build and test on WSL (Ubuntu 24.04), the environment the project was developed on. The TLS code
-links the system OpenSSL, so `libssl-dev` and `pkg-config` must be installed
-(`sudo apt install libssl-dev pkg-config`).
+Set up as in the root `README.md`, "Setup" (Linux, macOS, or Windows through WSL2). The TLS code
+links the system OpenSSL, which that setup installs.
 
 ```bash
-# The structural attacker (T2) needs a training set from the same client build; about 15 minutes.
-cargo run --release -p haystack-regtest --bin sessions -- --out out/sessions
-
 # A private regtest chain with a paid wallet. --mean-minutes 2 is demo speed; see below.
 cargo run --release -p haystack-demo -- --regtest --mean-minutes 2
 # then open http://127.0.0.1:7878 (http://127.0.0.1:7878/#lab opens the Lab tab)
+
+# Optional: the structural attacker (T2) needs a training set from the same client build, about
+# 15 minutes. Until it exists, the page scores with the many-rounds attacker (T1) alone.
+cargo run --release -p haystack-regtest --bin sessions -- --out out/sessions
 ```
 
 For a recording, open the page as an app window, without tabs or an address bar. From WSL:

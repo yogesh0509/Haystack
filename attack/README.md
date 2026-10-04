@@ -70,6 +70,13 @@ Run the unit tests:
 python3 -m unittest discover -s tests
 ```
 
+Show why fresh random decoys collapse and fixed ones hold (`docs/00-problem.md` §6 explains each
+column of the table):
+
+```bash
+python3 -m attack strategies
+```
+
 Score a padded Haystack session round by round. The session log from `haystack-electrum` is first
 checked against what the server itself received:
 
@@ -124,10 +131,10 @@ The files are listed in the order the data flows through them.
 | `posterior.py` | Turns weights into probabilities. `Block` is one cohort ("exactly `k` of these are real"); `Posterior` combines independent cohorts; `Mixture` combines A2's per-script-type runs, weighted by how well each type fits. `Infeasible` is raised when the evidence contradicts itself, such as a scripthash both ruled out and certainly real, rather than producing a wrong number. |
 | `scoring.py` | Runs an attacker level (`attack()`, `TIERS`) and scores it (`Score`, `run()`, `per_round()`). Prints the table below (`rounds_table()`). `ceiling()` is the best possible score, `log2(padding)`. |
 | `curve.py` | The privacy-against-bandwidth table. At each padding level it scores every regtest wallet with an A2 model trained on the others, and adds the bytes each sync cost. |
-| `__main__.py` | The command line: `python3 -m attack {score,curve}`. |
+| `strategies.py` | The decoy-strategy table of `docs/00-problem.md` §6. For each strategy (`fresh`, `epoch/3`, `fixed`) it runs the T1 attacker round by round on a synthetic wallet and prints, per cell, the scripthashes not yet ruled out and the precision in bits. |
+| `__main__.py` | The command line: `python3 -m attack {strategies,score,curve}`. |
 
-The synthetic wallets the tests use live in `tests/synthetic.py`, not here, because nothing in this
-module needs them.
+The synthetic wallets and decoy strategies live in `tests/synthetic.py`, not here.
 
 ## Score columns
 

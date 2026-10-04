@@ -73,7 +73,9 @@ def load_session(path):
     """haystack-session/1 from haystack-electrum: one round per line, the server's view and the truth.
 
     A scripthash's script type is on the chain only once it has history, so it is hidden for unused
-    ones; a query whose answer never arrived (`tx` null) contributes no fact.
+    ones; a query whose answer never arrived (`tx` null) contributes no fact. A round that failed
+    before sending any query (the client logs every failed round) reached the server with nothing,
+    so it is skipped rather than scored as an empty round.
     """
     obs, truth = [], []
     with open(path) as fh:
@@ -84,6 +86,8 @@ def load_session(path):
             if r.get("format") != "haystack-session/1":
                 raise ValueError(f"{path}:{n}: not a haystack-session/1 line")
             qs = r["queries"]
+            if not qs:
+                continue
             facts = {q["sh"]: Fact(q["tx"], q["type"] if q["tx"] else None)
                      for q in qs if q["tx"] is not None}
             obs.append(Round([q["sh"] for q in qs], facts))

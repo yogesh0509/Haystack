@@ -28,6 +28,14 @@ class LoadSessionTest(unittest.TestCase):
         self.assertEqual(obs.rounds[0].order, ["d0", "r", "d1"])
         self.assertEqual(truth.real(0), {"r"})
 
+    def test_a_round_that_sent_nothing_is_skipped(self):
+        # A sync that failed before its first query is logged with no queries; scoring it would
+        # divide by zero real addresses.
+        path = write([[], [query("d0", j=0), query("r")]])
+        obs, truth = load_session(path)
+        self.assertEqual(len(obs.rounds), 1)
+        self.assertEqual(truth.real(0), {"r"})
+
     def test_script_type_is_hidden_until_used(self):
         path = write([[query("unused"), query("used", tx=3, kind="p2tr")]])
         facts = load_session(path)[0].rounds[0].facts

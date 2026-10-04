@@ -174,14 +174,61 @@ Your real addresses appear in **every** round. Independently sampled decoys appe
 server that watches you sync a few times intersects the query sets and what survives is your wallet.
 
 ```bash
+python3 -m attack strategies
+```
+
+```
+real addresses : 100
+decoys / round : 900  (10x bandwidth)
+decoy pool     : 100000
+baseline       : plain Electrum sends 100 scripthashes, 0.00 bits
+each cell      : scripthashes not yet ruled out (precision in bits), many-rounds attacker
+
+ round |              fresh |            epoch/3 |              fixed
+------------------------------------------------------------------------
+     1 |   1000 (3.32 bits) |   1000 (3.32 bits) |   1000 (3.32 bits)
+     2 |    109 (0.12 bits) |   1000 (3.32 bits) |   1000 (3.32 bits)
+     3 |    100 (0.00 bits) |   1000 (3.32 bits) |   1000 (3.32 bits)
+     4 |    100 (0.00 bits) |    106 (0.08 bits) |   1000 (3.32 bits)
+     5 |    100 (0.00 bits) |    106 (0.08 bits) |   1000 (3.32 bits)
+     6 |    100 (0.00 bits) |    106 (0.08 bits) |   1000 (3.32 bits)
+```
+
+**What the table shows.** Each row is one sync of a 100-address wallet padded 10×: 900 decoys a
+round, drawn from a pool (the set of 100,000 scripthashes decoys may be picked from). Each column is
+one way of choosing those decoys. The attacker is the many-rounds attacker
+(`attack/a1_many_rounds.py`), the same one every score in this repo comes from. 
+
+Each cell holds two numbers:
+
+- **The count** (`1000`, `109`, `100`) is how many scripthashes the attacker has not yet ruled out. A
+  wallet keeps watching its own addresses, so a scripthash that stops being queried must have been a
+  decoy and is ruled out. The count can't fall below the 100 real addresses, so `100` means every
+  decoy is gone and the attacker holds exactly the wallet.
+- **The bits** are the attacker's precision in bits, the headline metric of `docs/03-metric.md`.
+  Precision is the share of the attacker's best 100 guesses that are real. With 1,000 candidates a
+  guess is right 100/1000 = 10% of the time, which is `-log2(0.10) = 3.32` bits, the ceiling at 10×.
+  With 109 candidates it is right 100/109 = 91.7% of the time, which is `-log2(0.917) = 0.12` bits.
+  With 100 candidates it is right every time, which is 0.00 bits.
+
+The three columns differ only in when decoys change:
+
+- **`fresh`** redraws every decoy each round. Round 2 keeps the 100 reals and the 9 decoys that
+  happened to be drawn twice. Round 3 keeps none, so the attacker holds the wallet.
+- **`epoch/3`** keeps the same decoys for three rounds, then redraws all of them. Rounds 1 to 3 are
+  one epoch and round 4 starts the next. Comparing the two epochs leaves 6 decoys alongside the 100
+  reals, and it stays at 106 until a third epoch starts. Rotating on a schedule only postpones the
+  collapse.
+- **`fixed`** sends the same decoys every round. Nothing ever vanishes, so nothing can be ruled out.
+
+`tests/test_regression.py` asserts the same behaviour over five random draws, so it stays true as the
+code changes:
+
+```bash
 python3 -m unittest -v tests.test_regression
 ```
 
-The test pads a 100-address wallet at 10× (900 decoys a round, drawn from a pool of 100,000) under
-three decoy strategies and runs the many-rounds attacker (`attack/a1_many_rounds.py`), the same one every score
-in this repo comes from. It scores each round in precision bits, the headline metric of
-`docs/03-metric.md`: `log2(10) = 3.32` bits means the attacker does no better than chance, and `0.00`
-means it has found the wallet. Over five random draws, it asserts:
+It asserts:
 
 - **`fresh`** redraws every decoy each round. It reads 3.32 bits in round 1 and at most 0.10 bits from
   round 3 on.
@@ -197,7 +244,8 @@ Ten-times padding with fresh decoys buys **three rounds**, then collapses to exa
 That matches the analytic prediction. A decoy survives round `r` only if it was drawn every time, so
 the expected survivors after `r` rounds are `k^r / |U|^(r-1)` for `k` decoys a round from a pool of
 `|U|`. After round two that is `900² / 100000 = 8.1` decoys left among the 100 reals, so precision is
-about `100 / 108.1 = 92.5%`, or `-log2(0.925) = 0.11` bits. After round three it is
+about `100 / 108.1 = 92.5%`, or `-log2(0.925) = 0.11` bits. The table's draw left 9 decoys (109
+candidates, 0.12 bits). Forty draws averaged 8.55, with a range of 1 to 13. After round three it is
 `900³ / 100000² = 0.07` decoys: almost always none, which is the 0.00 bits the test sees. These
 numbers assume decoys are otherwise indistinguishable from real addresses, so they are an upper bound
 on what a strategy can deliver, not a measurement of it.

@@ -1,4 +1,4 @@
-"""python3 -m attack {score,curve}"""
+"""python3 -m attack {strategies,score,curve}"""
 import argparse
 import json
 import sys
@@ -12,6 +12,13 @@ from .observe import check_plain, check_session, load_capture, load_honeypot, lo
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m attack")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    d = sub.add_parser("strategies", help="why fresh random decoys collapse (docs/00-problem.md section 6)")
+    d.add_argument("--real", type=int, default=100)
+    d.add_argument("--padding", type=float, default=10)
+    d.add_argument("--rounds", type=int, default=6)
+    d.add_argument("--pool", type=int, default=100_000)
+    d.add_argument("--seed", type=int, default=0)
 
     s = sub.add_parser("score", help="attack a logged session round by round")
     s.add_argument("--session", help="haystack-session/1 log from haystack-electrum")
@@ -28,6 +35,10 @@ def main(argv=None):
     v.add_argument("--dir", required=True, help="output of `cargo run -p haystack-regtest --bin sessions`")
 
     args = ap.parse_args(argv)
+    if args.cmd == "strategies":
+        from .strategies import strategies
+        print(strategies(args.real, args.padding, args.rounds, args.pool, args.seed))
+        return 0
     if args.cmd == "score" and args.view and not (args.last and args.json):
         ap.error("--view needs --last and --json")
     if args.cmd == "curve":

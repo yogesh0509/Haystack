@@ -4,25 +4,6 @@ Haystack hides a light wallet's real addresses inside a larger query of decoys, 
 well the hiding works by attacking it. This page is the plan it was built to: what each week set out
 to do, what was delivered, where the evidence is, and what is still open.
 
-One person built it over four weeks, from 2026-09-08 to the submission deadline on 2026-10-05. Every
-item below links to the code or document that backs it, and every number to the command or
-measurement it came from.
-
-## Terms used on this page
-
-- A **scripthash** is the hash of an address that an Electrum server is asked about. It identifies
-  the address as well as the address itself does (`docs/00-problem.md` §1).
-- A **decoy** is a scripthash the wallet queries only to hide its real ones. **Padding** is the
-  user's dial: the number of scripthashes sent per real one. Padding 10 sends 9 decoys with each
-  real scripthash.
-- A **full scan** walks each of the wallet's address chains until 50 unused addresses in a row. A
-  **sync**, in `bdk_wallet`'s sense, re-checks only addresses the wallet has already handed out.
-- **Precision** is the share of the attacker's best guesses that are really the wallet's.
-  **Precision in bits**, the headline score, turns it into bits: 0.00 means every guess was right,
-  which is what plain Electrum gives, and 3.32 at padding 10 means the guesses were no better than
-  random. **Precision among funded addresses** is the same score restricted to the addresses that
-  have transaction history, and it is always printed beside the headline (`docs/03-metric.md`).
-
 ## Approach
 
 Two rules shaped the plan.
@@ -246,13 +227,20 @@ with the same wallet code as `bdk_wallet`'s own Electrum example.
       it at padding 5, after syncs at 10 and 20, sent 670 scripthashes instead of 1,350, and the
       many-rounds attacker's headline fell to 2.23 bits, because every withdrawn decoy marks itself
       as a decoy. The page asks which dial the wallet used before restoring without the ledger.
-- [ ] **Reproducible end-to-end demo**: plain and padded syncs with the attacker's output side by
-      side, covering every case in `docs/07-walkthrough.md`.
-- [ ] **Writeup**: the algorithm on one page, the attack suite, the curve, the limitations, and the
-      prior work it builds on. Precision in bits is the headline, with precision among funded
-      addresses beside it, and the first paragraph states the restored-wallet limitation below.
-- [ ] **README and a clean clone**: the five-minute verification path and the demo work from a fresh
-      clone on WSL (Ubuntu 24.04), the environment the project was built and tested on.
+- [x] **Every case reproducible** (`docs/07-walkthrough.md`): the leak, padded and plain syncs scored
+      by the same attacker, the correctness tests, restored wallets with and without chain decoys,
+      restarts and the bandwidth curve, each with its command and expected output. Rerun in full on
+      2026-10-04: every result held. The rerun widened case 8's stated range, and case 3's sync
+      loop now waits for the demo to be ready before syncing.
+- [x] **Write-up**: the design decisions and their trade-offs on one page at the top of
+      `docs/02-design.md`, and the related work in `docs/05-prior-art.md`.
+- [ ] **README and a clean clone**: setup for Linux, macOS and Windows (through WSL2), the
+      five-minute check, the demo's happy path and the known limitations, followed from a fresh
+      clone.
+- [ ] **Demo video** (3–5 minutes), linked near the top of the README.
+- [ ] **A Docker image, if time allows**: one command that builds and runs the project identically
+      on Linux, macOS and Windows, including the local test chain, which can't run natively on
+      Windows because `electrs` has no Windows build there.
 
 ## Known limitations
 
@@ -305,9 +293,9 @@ Planned once all four weeks' items are done and tested:
   have to fake follow-up traffic per decoy (`docs/02-design.md`, "Sync scheduling").
 - **Protocol compatibility.** Test against a server that offers only Electrum protocol 1.7, which
   replaces the scripthash lookup methods with scriptpubkey ones; `electrum-client` 0.24.1 still calls
-  the old methods (`docs/05-prior-art.md`).
-- **Attacks borrowed from decoy schemes that failed elsewhere** (`docs/05-prior-art.md`, "Lessons
-  from decoy schemes that failed elsewhere"): a generic machine-learning classifier as a baseline
+  the old methods (`docs/05-prior-art.md`, "Earlier proposals in the Electrum and BDK ecosystem").
+- **Attacks borrowed from decoy schemes that failed elsewhere** (`docs/05-prior-art.md`,
+  "Lessons from decoy schemes that failed elsewhere"): a generic machine-learning classifier as a baseline
   attacker, a whole-wallet score over linked addresses and balance, an age/activity test for chain
   decoys, and a check for decoys that trip the server's error for an overly busy address.
 - **Decoy sampling that matches real wallets, not just exists on chain.** Draw chain decoys from the
@@ -319,8 +307,14 @@ Planned once all four weeks' items are done and tested:
   sync of a 400-address wallet (8,000) approaches its 10,000 disconnect point. Fulcrum caps a
   JSON-RPC batch at 345 requests, above the demo's current 100. Needs measuring against a real
   server, not assumed.
+- **The cost of append-only growth.** Every new address adds `padding − 1` decoys that are never
+  withdrawn, so a long-lived wallet's query only grows. Work out whether it needs a cap, and what
+  the cap costs in privacy.
+- **Padding and the stop gap.** The gap limit sets how many unused addresses get queried, and every
+  one carries `padding − 1` decoys. Measure whether a smaller gap limit at high padding saves
+  bandwidth without missing funds.
 - **A longer-term PIR replacement**, once it covers address history and not only the UTXO set
-  (`docs/05-prior-art.md`, "The academically correct answer").
+  (`docs/05-prior-art.md`, "Private information retrieval").
 - **Product patterns for a wallet built on Haystack**, from the Bitcoin Design Guide review: private
   by default before the first sync, since the first sync can't be taken back; an always-visible
   connection badge like Sparrow's; the dial under Settings → Network, matching where the guide puts
