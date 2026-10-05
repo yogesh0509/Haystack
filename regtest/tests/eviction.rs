@@ -1,10 +1,10 @@
 //! A payment that leaves the mempool unconfirmed must leave the wallet's balance, through Haystack
-//! as through upstream's `sync` (`docs/04-roadmap.md`, Week 4, "Mempool evictions").
+//! as through upstream's `sync` (`docs/02-design.md`, "haystack-electrum").
 //!
 //! The node pays the wallet 0.02 BTC, unconfirmed, and every copy of the wallet sees it. Then the
-//! node double-spends the same coins to its own address with a higher fee, so the payment leaves
-//! the mempool. The replacement never touches the wallet's addresses, so no copy can see a
-//! conflict; only the list of expected transactions can say the payment is gone.
+//! node double-spends the same coins to its own address with a higher fee. The replacement never
+//! touches the wallet's addresses, so only the list of expected transactions can say the payment
+//! is gone.
 //!
 //! Three copies of the wallet:
 //! - upstream `bdk_electrum`, a full scan and then the `sync` bdk's example uses;

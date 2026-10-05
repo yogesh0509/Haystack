@@ -1,6 +1,6 @@
 //! Records which source built this client, for the session log's provenance field: a structural
 //! attacker trained on sessions from one client must not score sessions from another
-//! (`docs/04-roadmap.md`, Week 3 safeguard 1).
+//! (`attack/README.md`, "Training safeguards").
 
 use std::fs;
 use std::path::{Path, PathBuf};

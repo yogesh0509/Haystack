@@ -1,4 +1,4 @@
-"""Option B's safeguards (docs/04-roadmap.md, Week 3): provenance and no training on the answer."""
+"""The training safeguards (attack/README.md): provenance and no training on the answer."""
 import json
 import tempfile
 import unittest

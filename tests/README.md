@@ -1,10 +1,10 @@
 # tests/
 
-45 tests covering `attack/`'s math and logic, the honeypot script's request handling, the
+49 tests covering `attack/`'s math and logic, the honeypot script's request handling, the
 plain-Electrum baseline on a real captured wallet, and the first real padded session. Standard-library `unittest`, no dependencies.
 
 ```bash
-python3 -m unittest discover -s tests      # all 45, from the repo root
+python3 -m unittest discover -s tests      # all 49, from the repo root
 python3 -m unittest tests.test_posterior   # one file
 ```
 
@@ -17,9 +17,9 @@ python3 -m unittest tests.test_posterior   # one file
 | `test_a2.py` | The structural classifier (`attack/a2_structural.py`) separates careless decoys from real addresses well, stays near chance against decoys generated from the same distribution as the real wallet (the oracle case), and that sending real addresses in a predictable position leaks even against otherwise perfect decoys. |
 | `test_metrics.py` | The calibration anchors: plain Electrum reads `0.00` bits, a theoretically perfect scheme hits the analytic ceiling `log2(padding)`, the headline rises with padding, an attack that does worse than random guessing is never credited as beating the defence, and the funded-address column on the restored-wallet worked example: 100% with HMAC-direct decoys while the headline stays above 3 bits, chance with matched decoys. |
 | `test_honeypot.py` | Starts the real honeypot server (`scripts/honeypot_electrum.py`), sends it two fake connections, and checks the log correctly tags each entry with its connection, batch, and position. |
-| `test_regression.py` | Locks in that known-broken decoy schemes (fresh-random, and decoys rotated every few rounds) always score near zero privacy — a permanent guard so the metric can't quietly start rating a known-broken scheme well — and that fixed decoys hold at the ceiling. Step 4 of the README's five-minute check, and the evidence for `docs/00-problem.md` §6. |
-| `test_plain_capture.py` | Six real `bdk_wallet` scans against the honeypot (`fixtures/`): the server received exactly the wallet's own scripthashes in every round, and the attacker reads 0.00 bits and 100% precision in every round. The end-of-week-1 bar of `docs/04-roadmap.md`. |
-| `test_train.py` | Option B's safeguards (`attack/a2_structural.py`): a training session from a different client build, or with no provenance, is refused; so is one with any of the scored session's reals as its own reals, or recorded at another chain share; a scored real appearing as another wallet's decoy is allowed; and the scored session can't be its own training set. |
+| `test_regression.py` | Known-broken decoy schemes (fresh-random, and decoys rotated every few rounds) always score near zero privacy, so the metric can't quietly start rating one well, and fixed decoys hold at the ceiling. Step 4 of the README's five-minute check, and the evidence for `docs/00-problem.md` §6. |
+| `test_plain_capture.py` | Six real `bdk_wallet` scans against the honeypot (`fixtures/`): the server received exactly the wallet's own scripthashes in every round, and the attacker reads 0.00 bits and 100% precision in every round. |
+| `test_train.py` | The training safeguards (`attack/README.md`): a training session from a different client build, or with no provenance, is refused; so is one with any of the scored session's reals as its own reals, or recorded at another chain share; a scored real appearing as another wallet's decoy is allowed; and the scored session can't be its own training set. |
 | `test_session.py` | Reading `haystack-session/1`: reals versus decoys, a script type hidden until its scripthash has history, an unanswered query observed but factless, and the check that catches a session log disagreeing with the server's order. |
 | `test_padded_session.py` | Six real `haystack-electrum` scans at padding 10, against the honeypot: the server received exactly the wallet's reals plus the ledger's decoys, the same set every round, and the many-rounds attacker reads the 3.32-bit ceiling. |
 

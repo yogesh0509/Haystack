@@ -20,7 +20,7 @@
 //! failed round is still recorded, with `error` set: its queries reached the server whether or not
 //! the sync finished. `client` names the build that produced the line: the crate version and a
 //! hash of its source, so a structural attacker trained on one client's sessions is never used to
-//! score another's (`docs/04-roadmap.md`, Week 3 safeguard 1).
+//! score another's (`attack/README.md`, "Training safeguards").
 
 use std::fs::OpenOptions;
 use std::io::Write;

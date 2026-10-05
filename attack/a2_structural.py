@@ -1,16 +1,10 @@
 """A2, the structural attack: a naive-Bayes likelihood ratio real:decoy from what a server sees about each
-scripthash, and its training on labelled sessions of other wallets (option B, docs/04-roadmap.md, Week 3).
+scripthash, trained on labelled sessions of other wallets. The training safeguards are in attack/README.md.
 
-The model is fit fresh on every score and never saved, so regenerating the training sessions is a complete
-reset. `fit()` enforces two of the three training safeguards, plus a settings check:
-
-- a training session from a different client build than the scored session is refused;
-- so is one in which any of the scored session's real scripthashes is also real, which is training on the
-  answer. That catches the same wallet at another padding. A scored real appearing as someone else's
-  decoy is allowed: chain-sourced decoys are other people's addresses, and on one shared chain that
-  includes the scored wallet's;
-- so is one recorded at a different padding or chain share, which would teach the model another
-  configuration's fingerprint.
+The model is fit fresh on every score and never saved. `fit()` refuses a training session from a different
+client build, one that shares any real scripthash with the scored session (training on the answer), and one
+recorded at a different padding or chain share. A scored real appearing as someone else's decoy is allowed:
+chain-sourced decoys are other people's addresses, and on one shared chain that includes the scored wallet's.
 """
 import json
 import math

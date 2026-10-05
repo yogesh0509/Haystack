@@ -1,16 +1,10 @@
 //! The demo wallet's own wallet code: `bdk_wallet`'s `examples/electrum.rs` (the 3.1.0 release's
 //! copy, which compiles unchanged against the 2.1.0 this repo builds on), with Haystack swapped in.
 //!
-//! The roadmap allows exactly five kinds of change (`docs/04-roadmap.md`, Week 2, "Public API"),
-//! and each one is marked below with `CHANGE n`:
-//!
-//! 1. the client construction line, which also takes the decoy key, the dial, the ledger file and
-//!    the saved cache file (and here the session log the live score reads);
-//! 2. each `sync` call becomes a full scan;
-//! 3. broadcasts go to a different server than the one the wallet syncs with;
-//! 4. the transaction cache is never pre-filled from the wallet's own transactions;
-//! 5. each scan also passes the wallet's expected unconfirmed transactions, so one that left the
-//!    mempool leaves the balance, as after upstream's `sync`.
+//! It makes exactly the five kinds of change an app makes to adopt Haystack
+//! (`haystack-electrum/README.md`, "Adopting it in a `bdk_wallet` app"), and each one is marked
+//! below with `CHANGE n`, numbered as in that list. Here change 1 also takes the session log the
+//! live score reads.
 //!
 //! Everything else keeps the example's calls: `Wallet::load` / `Wallet::create`,
 //! `next_unused_address`, `start_full_scan`, `STOP_GAP`, `BATCH_SIZE`,

@@ -127,7 +127,7 @@ pub fn score(session: &Path, train_root: &Path) -> Value {
         }
         [] => json!({ "unavailable": "Not scored: no sync yet." }),
         _ => {
-            json!({ "unavailable": "Not scored: this session used two dial settings, and the trained attacker knows one. Restart the demo to score a new setting from the first sync." })
+            json!({ "unavailable": "Not scored: this session used two settings, and the trained attacker knows one. A dial change does this, and so does a restore without the ledger, which drops chain decoys to 0%. Restart the demo to score one setting from the first sync." })
         }
     };
     json!({ "T1": t1, "T2": t2 })

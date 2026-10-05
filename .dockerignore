@@ -1,0 +1,13 @@
+# The build context: sources only. Everything git ignores stays out too; target/ alone is several
+# gigabytes, and regtest/sessions/ can hold an old training set.
+target/
+out/
+regtest/sessions/
+.git/
+**/__pycache__/
+*.sqlite
+honeypot-log.json
+capture-truth.json
+docs/06-decision-log.md
+Dockerfile
+.dockerignore

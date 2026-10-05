@@ -7,9 +7,8 @@
 //! uses: trust a certificate the first time, and refuse a different one afterwards.
 //!
 //! It uses OpenSSL rather than rustls because rustls verifies handshake signatures through webpki,
-//! which accepts only version 3 certificates. A survey of Electrum's public server list on
-//! 2026-10-02 found 7 of the 37 reachable servers on version 1 certificates, `fortress.qtornado.com`
-//! among them (`docs/04-roadmap.md`, Week 4).
+//! which accepts only version 3 certificates, and some public Electrum servers, `fortress.qtornado.com`
+//! among them, still use version 1 (`demo/README.md`, "Certificate policy").
 //!
 //! The policy, per `host:port`, with the pins kept in a JSON file:
 //! - no pin yet: accept, and pin the certificate's SHA-256 together with whether the public

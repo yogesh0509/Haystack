@@ -1,13 +1,11 @@
 # The problem
 
-Every claim below has a command next to it. Run them. The outputs in §1 and §2 were captured
-against live infrastructure. The output in §4 was regenerated with `capture/`, which runs stock scans
-with the published `bdk_wallet` 2.1.0 and `bdk_electrum` 0.23.2 the project builds against. The results in §6 are checked by
-`tests/test_regression.py`, which runs the project's own attacker.
-
-Each section states a claim and gives the command that verifies it, so nothing here needs to be taken
-on faith. For how each script works, see `scripts/README.md`; the decoy strategies of §6 are `pad()`
-in `tests/synthetic.py`.
+Each section states a claim and gives the command that verifies it, so nothing here needs to be
+taken on faith. The outputs in §1 and §2 were captured against live infrastructure. The output in §4
+was regenerated with `capture/`, which runs stock scans with the published `bdk_wallet` 2.1.0 and
+`bdk_electrum` 0.23.2 the project builds against. The results in §6 are checked by
+`tests/test_regression.py`, which runs the project's own attacker. For how each script works, see
+`scripts/README.md`; the decoy strategies of §6 are `pad()` in `tests/synthetic.py`.
 
 ---
 
@@ -87,7 +85,7 @@ python3 scripts/electrum_probe.py --address bc1qw508d6qejxtdg4y5r3zarvary0c5xw7k
 You can swap servers with `--server fortress.qtornado.com:50002` and get the same result from a
 different operator. There is nothing special about Blockstream's instance. The probe switches
 certificate checks off (`ssl.CERT_NONE`), because many Electrum servers use self-signed
-certificates; the Rust client's certificate policy is in `docs/04-roadmap.md`, Week 4.
+certificates; the Rust client's certificate policy is in `demo/README.md`, "Certificate policy".
 
 ---
 
@@ -143,7 +141,7 @@ scripthashes in every round, none extra and none missing.
 
 **Note on the lie.** The honeypot always answers empty so the scan runs to completion in one clean
 burst — a measurement convenience, not the threat being modeled. A real server can't lie wholesale
-without the user noticing a wrong balance (see `docs/01-threat-model.md`, "out of scope: a lying
+without the user noticing a wrong balance (see `docs/01-threat-model.md`, "Out of scope", "A lying
 server"). The leak this demo shows — full keychain disclosure, change labeling, future-address
 prediction (§5) — is identical against a fully honest server that just logs and correlates what it's
 asked.
@@ -197,7 +195,7 @@ each cell      : scripthashes not yet ruled out (precision in bits), many-rounds
 **What the table shows.** Each row is one sync of a 100-address wallet padded 10×: 900 decoys a
 round, drawn from a pool (the set of 100,000 scripthashes decoys may be picked from). Each column is
 one way of choosing those decoys. The attacker is the many-rounds attacker
-(`attack/a1_many_rounds.py`), the same one every score in this repo comes from. 
+(`attack/a1_many_rounds.py`), the same one every score in this repo comes from.
 
 Each cell holds two numbers:
 
@@ -228,17 +226,12 @@ code changes:
 python3 -m unittest -v tests.test_regression
 ```
 
-It asserts:
+It requires `fresh` to read 3.32 bits in round 1 and at most 0.10 bits from round 3 on, `epoch/3` to
+read 3.32 bits through round 3 and at most 0.25 bits in round 4 (the first round of the second
+epoch), and `fixed` to read 3.32 bits in every round.
 
-- **`fresh`** redraws every decoy each round. It reads 3.32 bits in round 1 and at most 0.10 bits from
-  round 3 on.
-- **`epoch/3`** keeps decoys for three rounds, then redraws. It reads 3.32 bits through round 3 and
-  at most 0.25 bits in round 4, the first round of the second epoch.
-- **`fixed`** sends the same decoys forever. It reads 3.32 bits in every round.
-
-Append-only — adding decoys for new addresses, never withdrawing one — is identical to `fixed` for a
-wallet that isn't growing. For a wallet that is, `tests/test_a1.py` checks that a new address padded
-with its own decoys stays at the 10% chance rate, and one added without them is exposed.
+Append-only, which means adding decoys for new addresses and never withdrawing one, is identical to
+`fixed` for a wallet that isn't growing.
 
 Ten-times padding with fresh decoys buys **three rounds**, then collapses to exactly the real set.
 That matches the analytic prediction. A decoy survives round `r` only if it was drawn every time, so
@@ -256,13 +249,10 @@ Three conclusions shape the rest of the design, each the opposite of the naive i
 2. **Scheduled rotation is actively harmful** — worse than never rotating at all, not a middle
    ground.
 3. **The workable invariant is append-only.** Grow the decoy set to cover new addresses over time,
-   but never withdraw one, so the intersection can never fall below the round-zero set.
-
-Point 3 has a sharp corollary that shapes the whole design: an address first queried at round *t* is
-absent from the intersection over rounds `1..t`, so intersection does not catch it — but the
-adversary can instead examine each round's **delta**. Newly revealed real addresses are protected
-only by the decoys added in the same delta. **Every increment needs its own padding ratio**, not
-just the initial set.
+   but never withdraw one, so the intersection can never fall below the round-zero set. A growing
+   wallet also needs new decoys alongside every new address, in the same sync, or the new address
+   is exposed by comparing consecutive syncs (`docs/02-design.md`, "A1 — Intersection across
+   rounds", the delta corollary).
 
 ---
 
@@ -278,10 +268,9 @@ not know what city you are in. Necessary, nowhere near sufficient, and orthogona
 **Trust a no-logs server.** An unverifiable promise. The operator's stated policy is not a technical
 constraint, and you cannot audit their retention.
 
-**Compact block filters (BIP157/158).** The honest protocol-level answer: the server ships filters,
-the client tests them locally and downloads only matching blocks. Much better privacy, but the
-bandwidth is punishing on mobile, sync is slow, support is patchy, and the server still learns which
-blocks you fetched.
+**Compact block filters (BIP157/158).** The honest protocol-level answer, with much better privacy,
+but the bandwidth is punishing on mobile, sync is slow, support is patchy, and the server still
+learns which blocks you fetched (`docs/05-prior-art.md`).
 
 The gap Haystack targets sits between "run a full node" (private, expensive, excludes everyone) and
 "query Electrum" (cheap, zero privacy). Almost nothing lives there.

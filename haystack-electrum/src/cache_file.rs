@@ -1,11 +1,10 @@
 //! The saved cache: every transaction and merkle proof the client has fetched, kept across
 //! restarts, for reals and decoys alike (`docs/02-design.md`, "haystack-electrum").
 //!
-//! The cache exists for privacy, not speed. The client fetches only what its cache lacks. A cache
-//! filled from the wallet's own stored transactions, as `bdk_wallet`'s example does, would hold
-//! real transactions only. After a restart the client would then refetch every decoy transaction
-//! and no real one, which picks out exactly the funded reals. So this cache is filled only by the
-//! client itself, from what it actually fetched, and the crate has no `populate_tx_cache`.
+//! The cache exists for privacy, not speed: it is filled only by the client's own fetches, so a
+//! restarted client never refetches decoy transactions alone, which would pick out the funded
+//! reals. The crate therefore has no `populate_tx_cache` (`haystack-electrum/README.md`, "Adopting
+//! it in a `bdk_wallet` app").
 //!
 //! Block headers are not saved. They are cached by height, and after a reorganisation a saved
 //! header would point a proof lookup at a block that is no longer on the chain. Proofs are saved

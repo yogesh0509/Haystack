@@ -1,12 +1,7 @@
 //! The correctness gate on a real Electrum server: a padded scan and a plain `bdk_electrum` scan of
-//! the same real wallet history must leave the wallet in the same state (`docs/04-roadmap.md`).
-//!
-//! Three rounds, each a full scan by both clients into their own copy of the wallet:
-//! 1. the history `build_history` creates, with two transactions unconfirmed;
-//! 2. after a block confirms them and a new payment lands on external 60, inside the frozen range,
-//!    so Haystack needs a second stage;
-//! 3. after a one-block reorganisation moves that block's transactions to a new block, so the
-//!    chain-tip agreement and the merkle proofs run against changed history.
+//! the same real wallet history must leave the wallet in the same state, after each of three rounds
+//! (the initial history, a block plus a payment that needs a second stage, and a one-block
+//! reorganisation). `regtest/README.md`, "The correctness gate", describes each round.
 //!
 //! The padded client carries its saved cache (`haystack_electrum::cache_file`) from round to round,
 //! as a restarted wallet would, so round 3 also checks that proofs saved before the reorganisation

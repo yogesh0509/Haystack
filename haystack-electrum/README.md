@@ -7,9 +7,8 @@ type back; the padding happens inside, at the batch level, not as a wrapper arou
 client (`docs/02-design.md`, "haystack-electrum: the padded sync client," explains why a wrapper
 can't do this).
 
-A scripthash is the hashed form of an address that Electrum uses as its lookup key (SHA-256 of the
-script pubkey, bytes reversed). A decoy is a scripthash for a script nobody holds a key for, built
-so the server cannot tell it apart from a real one on the wire.
+A decoy is a scripthash (`docs/00-problem.md` §1) for a script nobody holds a key for, built so the
+server cannot tell it apart from a real one on the wire.
 
 ## What it does
 
@@ -37,29 +36,36 @@ single out which are real.
 
 Decoys are **deterministic per wallet** and **append-only**: the first time a position is queried,
 its decoy count is frozen in the ledger, and the same decoys are sent again on every later sync.
-Moving the dial changes only positions frozen after the move, so new positions and decoys can be
-added but none is ever withdrawn. Both properties come from the same finding in
-`tests/test_regression.py`: independent, re-randomised decoys let a server intersect query sets
-across syncs and recover the wallet in three rounds, and decoys rotated on any schedule collapse the
-moment a second schedule epoch is observed. `docs/02-design.md` has the full argument.
+Moving the dial changes only positions frozen after the move, so decoys are added but never
+withdrawn. Re-randomised decoys let a server intersect query sets across syncs and recover the
+wallet in three rounds, and decoys rotated on any schedule collapse the moment a second epoch is
+observed (`docs/00-problem.md` §6, checked by `tests/test_regression.py`; the design argument is in
+`docs/02-design.md`).
 
-## What it does not do
+## Adopting it in a `bdk_wallet` app
 
-No `sync` and no `transaction_broadcast`. Every sync here is a full scan — a revealed-only sync
-would drop the unused tail and its decoys, and broadcasting through this session's server would tie
-a transaction to it (`docs/01-threat-model.md`). `full_scan_expecting` covers the one thing a plain
-full scan can't: telling when an unconfirmed transaction has left the mempool. It takes the expected-
-transaction list an app would otherwise pass to upstream's `sync` and checks it locally; nothing
-extra is sent to the server for it.
+`HaystackElectrumClient::new(inner, decoy_key, padding)` stands in for `BdkElectrumClient::new(inner)`,
+and `full_scan` keeps upstream's signature. An app makes five kinds of change. The crate has no
+`sync` and no `transaction_broadcast`, so an app that misses one of them fails to compile instead of
+silently sending an unpadded query. The demo wallet makes exactly these five and no others
+(`demo/README.md` compares it line by line with `bdk_wallet`'s own Electrum example).
 
-No `populate_tx_cache`. A cache filled from the wallet's own stored transactions would hold reals
-only, and after a restart the client would refetch every decoy and no real one — which is exactly
-the signal the padding exists to hide. See `cache_file.rs`.
-
-Chain-sourced decoys leak by construction: finding one means probing the sync server for a random
-transaction's history, and a real wallet never makes that kind of lookup. The leak is accepted for
-now and recorded in the session log as `probes`, for an attack that isn't written yet
-(`chain.rs`, `docs/02-design.md` §"Where decoys come from").
+1. **Construct the client with the decoy key**, the padding dial, the ledger file and the saved
+   cache file (the code sample below). The key comes from the wallet's own public keys, so every
+   device reaches the same decoys, and the ledger file is the wallet's Haystack backup.
+2. **Replace each `sync` with a full scan.** A sync of handed-out addresses only would drop the
+   unused addresses and their decoys from the query, which exposes them.
+3. **Broadcast through a different server** than the one the wallet syncs with, because
+   broadcasting through the session's server would tie the transaction to it
+   (`docs/01-threat-model.md`).
+4. **Don't pre-fill the transaction cache from the wallet's own transactions.** There is no
+   `populate_tx_cache`: a cache holding only real transactions makes a restarted client refetch
+   every decoy transaction and no real one, which is exactly the signal the padding exists to hide
+   (`cache_file.rs`).
+5. **Pass the wallet's expected unconfirmed transactions to the scan**, as
+   `full_scan_expecting(wallet.start_full_scan(), wallet.start_sync_with_revealed_spks(), …)`. A
+   full scan alone can't tell when an unconfirmed transaction has left the mempool; this list, the
+   one upstream's `sync` uses, can. It is checked locally and nothing extra is sent to the server.
 
 ## Use it
 
@@ -92,6 +98,13 @@ to upstream's client and checks that both return the same wallet data:
 ```bash
 cargo test -p haystack-electrum
 ```
+
+## Known leak: chain-sourced decoys
+
+Finding a chain-sourced decoy means probing the sync server for a random transaction's history,
+which a real wallet never does, so a server that reads its own log can name every one. The leak is
+accepted for now and recorded in the session log as `probes`, for an attack that isn't written yet
+(`chain.rs`; `docs/02-design.md`, "Where decoys come from").
 
 ## Built on
 

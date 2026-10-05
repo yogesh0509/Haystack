@@ -1,24 +1,16 @@
 //! When the next automatic sync happens.
 //!
 //! The rule: the moment a sync finishes, the delay until the next one is drawn and committed, and
-//! nothing the wallet does afterwards moves it. A sync whose timing never depends on wallet events
-//! gives a timing attack nothing to correlate.
+//! nothing the wallet does afterwards moves it, so a timing attack has nothing to correlate. The
+//! delay is exponential with mean `mean`, drawn as `-mean · ln(U)` for `U` uniform on (0, 1]; unlike
+//! a fixed interval with bounded jitter it has no deadline, and the chance of a sync in the next `t`
+//! is `1 − e^(−t/mean)` however long it has been.
 //!
-//! The delay is exponential with mean `mean`, drawn as `-mean · ln(U)` for `U` uniform on (0, 1].
-//! Unlike a fixed interval with bounded jitter, it has no deadline: however long it has been since
-//! the last sync, the chance of one in the next `t` is `1 − e^(−t/mean)`.
-//!
-//! A manual sync is a separate, disclosed path and can't move the automatic timer. A failed
-//! automatic sync is treated like a finished one — the next attempt is a fresh draw — because a
-//! fixed retry interval would be a cadence, and a cadence identifies a wallet across IP changes.
-//!
-//! A sync that came due while the process couldn't run is skipped, never fired late. A phone that
-//! freezes a background app keeps its clock running, so when the app returns the timer is already
-//! past due, and firing then would tie the sync to the moment the user looked. Instead the loop
-//! notices it woke more than `LATE` after the due time and calls `skip`, which draws a fresh delay
-//! from now. Because the delay is memoryless, the time from that moment to the next sync has the
-//! same distribution as for a timer that was never frozen, so the skip itself shows nothing. The
-//! same rule covers a timer that comes due while a manual sync is still running.
+//! A manual sync can't move the automatic timer, and a failed automatic sync is a fresh draw. A
+//! sync that came due while the process couldn't run, or while a manual sync was running, is
+//! skipped, never fired late: the loop notices it woke more than `LATE` after the due time and
+//! calls `skip`, which draws a fresh delay from now. `docs/02-design.md`, "Sync scheduling", gives
+//! the reasoning and worked examples.
 //!
 //! The product default is `DEFAULT_MEAN`, 30 minutes. A demo can pass a shorter mean so automatic
 //! syncs happen while people watch; that is a presentation setting, not a recommendation.

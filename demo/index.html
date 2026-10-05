@@ -200,7 +200,8 @@ details summary { cursor: pointer; font-weight: 600; }
         <p class="note">A payment lands on the next unused address. An address that goes from no
         history to some while being watched must be real, because nobody pays a decoy, so the next
         sync exposes it. The wallet's own payments are broadcast through bitcoind, not the sync
-        server, so the server can't tie them to this wallet's sessions.</p>
+        server, so the server doesn't see the broadcast. Their change still lands on a change address
+        the wallet already watches, so the next sync exposes that address the same way.</p>
       </section>
 
       <section class="card" id="restore-card">

@@ -17,11 +17,12 @@ descriptors, talks to the Electrum server and writes the ledger; the page only d
 
 ## Running it
 
-Set up as in the root `README.md`, "Setup" (Linux, macOS, or Windows through WSL2). The TLS code
-links the system OpenSSL, which that setup installs.
+Set up as in the root `README.md`, "Setup": Docker on any system, or a native build on Linux, macOS,
+or Windows through WSL2. The TLS code links the system OpenSSL, which either setup provides. With
+Docker, the image's default command is the first command below, listening for the host browser.
 
 ```bash
-# A private regtest chain with a paid wallet. --mean-minutes 2 is demo speed; see below.
+# A private regtest chain with a paid wallet. --mean-minutes 2 is demo speed; see the flag table.
 cargo run --release -p haystack-demo -- --regtest --mean-minutes 2
 # then open http://127.0.0.1:7878 (http://127.0.0.1:7878/#lab opens the Lab tab)
 
@@ -46,30 +47,19 @@ cargo run --release -p haystack-demo -- --url ssl://fortress.qtornado.com:50002
 |---|---|---|
 | `--regtest` | off | Start `bitcoind` and `electrs` on a private chain, give the paid demo wallet its history, and give 12 other wallets theirs, the same population `regtest/`'s session generator builds, so chain decoys have candidates. |
 | `--url` | none | Sync the never-paid demo wallet against `tcp://host:port` or `ssl://host:port` instead. |
-| `--mean-minutes` | `30` | The automatic sync's mean delay. 30 minutes is the product default (`SyncTimer`'s `DEFAULT_MEAN`). |
+| `--mean-minutes` | `30` | The automatic sync's mean delay. 30 minutes is the product default (`SyncTimer`'s `DEFAULT_MEAN`); a presentation passes 2 so syncs happen while people watch, and the page says when it runs at demo speed. How the delay is drawn and what 30 minutes costs are in `docs/02-design.md`, "Sync scheduling". |
 | `--padding` | `10` | The dial's starting value: 2, 5, 10 or 20, the settings the structural attacker is trained at. |
 | `--train` | `out/sessions` | Where the training set lives. |
 | `--data` | `out/demo` | Wallet databases, ledgers, caches, session logs, and `pins.json`. The regtest folder is wiped at each start, because the chain is new. |
-| `--port` | `7878` | The page's port on `127.0.0.1`. |
-
-### The automatic sync's mean delay: 2 minutes for the demo, 30 in the product
-
-The automatic sync waits an exponential delay with the configured mean, drawn the moment the last
-sync finished. The product default is **30 minutes**: 48 syncs a day, about 11.9 MiB a day at
-padding 10 using Week 3's measured 253.5 KiB per steady-state sync, with a balance that is 30
-minutes old on average and older than an hour 13.5% of the time (`docs/02-design.md`, "Sync
-scheduling"). A presentation runs with `--mean-minutes 2` so automatic syncs happen while people
-watch, and the page says when it runs at demo speed. Leave the flag out to run at the default.
-
-A sync that came due while the process couldn't run is skipped and redrawn from that moment, never
-fired late. The same happens when it comes due during a manual sync.
+| `--port` | `7878` | The page's port. |
+| `--host` | `127.0.0.1` | The address the page listens on. The Docker image passes `0.0.0.0`, because a container's own loopback can't be reached from the host; `docker run -p 127.0.0.1:7878:7878` still publishes it on the host's loopback only. |
 
 ## The wallet code and the five allowed changes
 
 `src/wallet.rs` is the wallet-handling code. It keeps `examples/electrum.rs` from `bdk_wallet` 3.1.0,
 which compiles unchanged against the 2.1.0 this repo builds on, except for the five kinds of change
-the roadmap allows (`docs/04-roadmap.md`, Week 2, "Public API"). The table lists every line of the
-example the demo uses, and how each one appears in `src/wallet.rs`.
+listed in `haystack-electrum/README.md`, "Adopting it in a `bdk_wallet` app". The table lists every
+line of the example the demo uses, and how each one appears in `src/wallet.rs`.
 
 | Example line | What it does | In the demo |
 |---|---|---|
@@ -126,7 +116,10 @@ example the demo uses, and how each one appears in `src/wallet.rs`.
 ## Certificate policy
 
 `src/transport.rs` trusts a self-signed certificate the first time and refuses a different one
-afterwards, as Electrum's own client does. It uses OpenSSL rather than the `rustls` that
-`electrum-client` ships with: rustls checks handshake signatures through `webpki`, which accepts
-only version 3 certificates, and a survey of Electrum's public server list on 2026-10-02 found 7 of
-the 37 reachable servers on version 1 certificates. The pins are kept in `out/demo/pins.json`.
+afterwards, as Electrum's own client does; its module comment spells out the rules. A server first
+seen with an authority-signed certificate that later presents a self-signed one is refused too. It
+uses OpenSSL rather than the `rustls` that `electrum-client` ships with, because rustls checks
+handshake signatures through `webpki`, which accepts only version 3 certificates. A survey of
+Electrum's public server list on 2026-10-02 found 37 servers reachable: 12 with authority-signed
+certificates, 18 self-signed with version 3 certificates, and 7 self-signed with old version 1
+certificates. The pins are kept in `out/demo/pins.json`.

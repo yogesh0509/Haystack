@@ -27,10 +27,10 @@ commands you can run, against a real public server and a fake one that logs ever
   wallet and answers all of them; the wallet keeps only its own answers. The user sets the padding
   on a dial and sees what each setting costs in bandwidth.
 - **The same decoys every time, never withdrawn.** Decoys are derived from a keyed hash of the
-  wallet's public keys, so every sync sends exactly the same set. Redrawing decoys each sync is
-  undone after about three syncs, because the server intersects the sets and only the real addresses
-  survive. Rotating them on a schedule is worse than never rotating. Both results are checked by
-  `tests/test_regression.py`. New addresses get their own new decoys in the same sync.
+  wallet's public keys, so every sync sends exactly the same set. Redrawing them each sync, or
+  rotating them on a schedule, lets the server intersect the sets and recover the real addresses
+  within a few syncs (shown in [docs/00-problem.md](docs/00-problem.md) §6 and checked by
+  `tests/test_regression.py`). New addresses get their own new decoys in the same sync.
 - **A drop-in for `bdk_electrum`.** `haystack-electrum` is a sibling crate with the same `full_scan`
   signature, so a `bdk_wallet` app adopts it by changing a handful of lines (below). The server is
   unmodified.
@@ -57,19 +57,50 @@ compact block filters, private information retrieval, decoy schemes in Monero an
 - The headline measurement: at padding 10 a sync costs about 8.4 times a plain one, and the
   attacker's score is about 2.6 to 2.7 bits averaged over 13 test wallets.
 
-**Not finished:**
+**Not finished, and known limits:**
 
 - **A restored wallet's funded addresses stay exposed** unless some decoys are real addresses taken
   from the chain. Haystack can take them, but it finds them by asking the same server, which could
   identify every one from its own log. A separate lookup server is the planned fix.
 - **Some attacks aren't built**: linking addresses through shared transactions on chain, and
   analysing sync timing. The score covers only the attacks in this repo.
-- **Tested against two public servers only** (`electrum.blockstream.info` and
-  `fortress.qtornado.com`), once each.
+- **The test wallets' histories are assumed**, not measured from real wallets, and scores on mainnet
+  could differ.
+- **Bandwidth and server limits.** A single padding-10 sync already exceeds ElectrumX's default
+  per-session request budget, so busy public servers may throttle it. Haystack has been tested
+  against two public servers only (`electrum.blockstream.info` and `fortress.qtornado.com`), once
+  each, and not against a busy one.
+- **It is obfuscation, not cryptography.** Private information retrieval would let the server answer
+  without learning anything, at a cost no Electrum server supports today.
 
 Details, evidence and the post-hackathon plan are in [docs/04-roadmap.md](docs/04-roadmap.md).
 
 ## Setup
+
+There are two ways: Docker, which works the same on Linux, macOS and Windows, or a native build.
+
+### With Docker, on any system
+
+Install Docker (Docker Desktop on macOS and Windows), then:
+
+```bash
+git clone https://github.com/yogesh0509/Haystack.git
+cd Haystack
+docker build -t haystack .
+docker run -it --rm -p 127.0.0.1:7878:7878 -v haystack-out:/haystack/out haystack
+```
+
+Open <http://127.0.0.1:7878> once the log says it is ready, and follow the happy path below; Ctrl-C
+stops it. The build took 5½ minutes on an 8-core machine, and downloads the Rust toolchain image,
+the crates, and `bitcoind` and `electrs`, each checked against a pinned hash. The `haystack-out`
+volume keeps wallets, session logs and the training set between runs. Any other command in this
+README runs in the same image, for example the structural attacker's training set:
+
+```bash
+docker run --rm -v haystack-out:/haystack/out haystack sessions --out out/sessions
+```
+
+### Native build
 
 You need Git, Python 3.9 or newer (standard library only), Rust stable from
 [rustup.rs](https://rustup.rs), a C compiler, and OpenSSL's development files. The first build needs
@@ -97,7 +128,7 @@ Then install Rust as on Linux. On Apple Silicon the test chain's `bitcoind` and 
 builds, which run under Rosetta 2. The macOS build has not been tested yet.
 
 **Windows.** The Python parts, including the five-minute check below, run natively: use `py`
-wherever this README says `python3`. The Rust parts need WSL2 with any Linux distribution
+wherever this README says `python3`. The Rust parts need Docker (above), or WSL2 with any Linux distribution
 (`wsl --install` in an administrator PowerShell), then the Linux steps above inside it. The local
 test chain has no Windows build of `electrs`, so it can't run natively. The project was built and
 tested in WSL2.
@@ -184,35 +215,14 @@ chain decoys, restarts, and the bandwidth-against-privacy curve.
 
 ## Using it in a `bdk_wallet` app
 
-`HaystackElectrumClient` stands in for `BdkElectrumClient`. An app makes five kinds of change,
-listed against `bdk_wallet`'s own Electrum example in [demo/README.md](demo/README.md):
-
-1. construct `HaystackElectrumClient` with the decoy key, the padding, the ledger file and the saved
-   cache file;
-2. replace each `sync` with a full scan, so the unused addresses and their decoys are always sent;
-3. broadcast through a different server than the one the wallet syncs with;
-4. don't pre-fill the transaction cache from the wallet's own transactions;
-5. pass the wallet's expected unconfirmed transactions to the scan
-   (`full_scan_expecting(wallet.start_full_scan(), wallet.start_sync_with_revealed_spks(), …)`), so
-   a payment that leaves the mempool leaves the balance.
-
-The crate has no `sync` and no `transaction_broadcast`, so a missed change fails to compile instead
-of silently sending an unpadded query.
-
-## Known limitations and next steps
-
-- **Privacy against a server that reads its own lookup log** needs an independent lookup server for
-  chain decoys. Next step after the hackathon.
-- **On-chain clustering and timing attacks** aren't built, so the score doesn't account for them.
-- **The test wallets' histories are assumed**, not measured from real wallets, and scores on mainnet
-  could differ.
-- **Bandwidth and server limits.** Padding 10 costs about 8.4 times a plain sync, and a single
-  padding-10 sync already exceeds ElectrumX's default per-session request budget, so busy public
-  servers may throttle it. Not yet measured against one.
-- **It is obfuscation, not cryptography.** Private information retrieval would let the server answer
-  without learning anything, at a cost no Electrum server supports today.
-
-The full list, and the plan for each, is in [docs/04-roadmap.md](docs/04-roadmap.md).
+`HaystackElectrumClient` stands in for `BdkElectrumClient`, with the same `full_scan` signature. An
+app makes five kinds of change: it constructs the client with the decoy key and the padding, runs a
+full scan wherever it used `sync`, broadcasts through a different server, leaves the transaction
+cache unfilled, and passes the wallet's expected unconfirmed transactions to the scan. The reason for
+each, and a code sample, are in [haystack-electrum/README.md](haystack-electrum/README.md). The demo
+wallet's code is compared line by line with `bdk_wallet`'s own Electrum example in
+[demo/README.md](demo/README.md). The crate has no `sync` and no `transaction_broadcast`, so a missed
+change fails to compile instead of silently sending an unpadded query.
 
 ## Repo map
 

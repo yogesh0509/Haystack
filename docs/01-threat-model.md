@@ -74,8 +74,7 @@ Two things are deliberately *not* claimed:
 **This is obfuscation, not cryptographic privacy.** There is no security reduction here, no hard
 problem the adversary must solve. The adversary's advantage is a probability that shrinks with
 padding, not a negligible function. Anyone expecting a PIR-style guarantee should read
-`docs/04-roadmap.md`, "What this project chose not to build", for why that path was not taken in a
-four-week build.
+`docs/05-prior-art.md`, "Private information retrieval", for what that path costs today.
 
 **The bound is empirical.** The score comes from running attacks, not from a proof. That makes the
 attack suite the most important artifact in the repo — a weak attack suite produces a flattering,

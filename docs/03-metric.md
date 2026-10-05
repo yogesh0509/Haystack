@@ -4,7 +4,7 @@
 each attack combines into one posterior belief (`attack/posterior.py`), scored against ground truth
 (`attack/scoring.py`), and checked by the Python tests: plain Electrum reads 0.00 on synthetic data
 and on a real captured wallet, a perfect scheme reads the analytic ceiling, and known-broken decoy
-schemes read near zero (`tests/`). All 45 pass. The metrics run on real traffic: padded sessions
+schemes read near zero (`tests/`). The metrics run on real traffic: padded sessions
 against the honeypot, and paid regtest wallets whose sessions carry the server's real answers, scored by the structural
 attacker trained on other wallets' sessions (`python3 -m attack curve`).
 
@@ -206,7 +206,7 @@ nobody re-adds them without rediscovering the problem.
   it is still a sum of independent per-address terms, so it can't see whether the remaining doubt is
   spread out or concentrated in a group. On the two queries in the joint-entropy table above it reads
   `4.69` for both.
-- **The set-size proxy**, `log2(surviving candidates / |R|)`, Week 0's first metric, adds nothing
+- **The set-size proxy**, `log2(surviving candidates / |R|)`, the first metric tried, adds nothing
   precision in bits doesn't. When the only evidence is ruling candidates out, as in the intersection
   attack, precision among `S` equally likely survivors is `|R| / S`, so precision in bits is
   `log2(S / |R|)`: the same number. When the evidence is uneven, the proxy ignores it: the structural
@@ -230,37 +230,20 @@ weights, and that choice is itself a place a result could end up looking better 
 
 ---
 
-## Open questions — resolved
+## What the attacker is assumed to know
 
-The four questions below shaped the metric's definition. All four are closed; kept here as the record
-of what was open and why.
+Two assumptions shape how the score is computed.
 
-1. **How does a hard-elimination attack produce a probability?** It doesn't need to, on its own. A
-   hard elimination is a weight of 0, one piece of evidence among however many an attack level
-   supplies; Bayes' rule combines all of them into per-address probabilities directly
-   (`attack/posterior.py`, worked example above). Where the many-rounds attack is the only evidence
-   available, this correctly reduces to "uniform over the survivors" — not a placeholder, the exact
-   right answer given only that evidence.
-2. **Is the effective anonymity set computable at realistic scale?** Yes, exactly, using the same
-   running-total method as question 1 — an elementary-symmetric-polynomial recursion over `|Q|` items
-   and `|R|` slots (`_esp_rows`, `attack/posterior.py`), checked against brute-force enumeration on
-   300 random small cases (`tests/test_posterior.py`) and against the closed form for the uniform case
-   at `n = 400, k = 40`. What wasn't anticipated: the metric is exact and cheap, but it turned out not
-   to measure what it was meant to — see joint entropy under "Dropped metrics," above.
-3. **Does the adversary know `|R|`?** Yes, and not only as a scoring convenience. `docs/01-threat-model.md`
-   already grants the adversary the wallet software's behaviour, including the gap limit; every sync
-   being a full scan (`docs/02-design.md`, "haystack-electrum") means a never-paid
-   wallet's real count is fixed by the gap limit alone, and the capture fixture confirms it: all 6 real
-   rounds hold exactly 100 scripthashes. `attack/scoring.py`'s `knowledge()` grants the attacker the
-   real count per first-seen cohort, consistent with this.
-4. **How does each adversary level map to a distinct `p(s)`-producing model?** There is one model, not
-   one per level. A level just switches which evidence is available to it (`attack()`,
-   `attack/scoring.py`): the single-round level gets none, the many-rounds level gets persistence and
-   activation, the structural level adds the classifier's weights on top. `docs/02-design.md`'s "A note
-   on adversary strength" states the levels; this document and `attack/scoring.py` state which evidence
-   each one turns on. Two things this mapping made visible that weren't obvious before it was written
-   down: query order is judged only at the structural level, even though the threat model grants order
-   from the first round, so a good many-rounds score should not be read as meaning order is safe
-   (`tests/test_a2.py`'s reals-first test is the direct check); and the many-rounds level's evidence is three
-   things, not one — persistence, cohort counts, and activation — where the original open question and
-   the design note both described it in looser terms.
+1. **The attacker knows how many real addresses there are, `|R|`.** `docs/01-threat-model.md` already
+   grants the adversary the wallet software's behaviour, including the gap limit. Every sync being a
+   full scan (`docs/02-design.md`, "haystack-electrum") means a never-paid wallet's real count is
+   fixed by the gap limit alone, and the capture fixture confirms it: all 6 real rounds hold exactly
+   100 scripthashes. `knowledge()` in `attack/scoring.py` grants the attacker the real count per
+   first-seen cohort, consistent with this.
+2. **There is one model, not one per adversary level.** A level only switches which evidence is
+   available to it (`attack()`, `attack/scoring.py`): the single-round level gets none, the
+   many-rounds level gets persistence, cohort counts and activation, and the structural level adds
+   the classifier's weights on top. The levels themselves are in `docs/02-design.md`, "A note on
+   adversary strength". Query order is judged only at the structural level, even though the threat
+   model grants order from the first round, so a good many-rounds score should not be read as
+   meaning order is safe (`tests/test_a2.py`'s reals-first test is the direct check).

@@ -5,19 +5,10 @@
 //! the repo's own attacker scores each copy's session log, and the page shows that score, the
 //! funded column beside it, and the bytes the sync cost.
 //!
-//! ```text
-//! cargo run --release -p haystack-demo -- --regtest --mean-minutes 2      # http://127.0.0.1:7878
-//! cargo run --release -p haystack-demo -- --url tcp://127.0.0.1:50001     # against the honeypot
-//! cargo run --release -p haystack-demo -- --url ssl://fortress.qtornado.com:50002
-//! ```
-//!
-//! `--regtest` starts `bitcoind` and `electrs` on a private chain, gives the paid demo wallet its
-//! history and gives 12 other wallets theirs, the same population `regtest/`'s session generator
-//! builds, so chain decoys have candidates. Its first sync is a restored wallet's. Without
-//! `--regtest` the wallet is the never-paid public-seed demo wallet that `capture/` also scans, watch-only.
-//!
-//! The automatic sync runs on `SyncTimer` with `--mean-minutes` (default 30, the product default).
-//! A presentation passes 2 so automatic syncs happen while people watch.
+//! `--regtest` runs against a private chain with a paid wallet (a restored wallet's first sync);
+//! without it the wallet is the never-paid public-seed demo wallet that `capture/` also scans,
+//! watch-only. The automatic sync runs on `SyncTimer`. `demo/README.md` has every flag and the
+//! commands for each server.
 
 mod score;
 mod transport;
@@ -59,6 +50,7 @@ const HAYSTACK: usize = 1;
 struct Args {
     regtest: bool,
     url: Option<String>,
+    host: String,
     port: u16,
     mean: Duration,
     data: PathBuf,
@@ -71,6 +63,7 @@ fn args() -> anyhow::Result<Args> {
     let mut a = Args {
         regtest: false,
         url: None,
+        host: "127.0.0.1".into(),
         port: 7878,
         mean: DEFAULT_MEAN,
         data: root.join("out/demo"),
@@ -86,6 +79,7 @@ fn args() -> anyhow::Result<Args> {
         let value = it.next().ok_or_else(|| anyhow!("{flag} needs a value"))?;
         match flag.as_str() {
             "--url" => a.url = Some(value),
+            "--host" => a.host = value,
             "--port" => a.port = value.parse()?,
             "--mean-minutes" => a.mean = Duration::from_secs_f64(value.parse::<f64>()? * 60.0),
             "--data" => a.data = value.into(),
@@ -654,7 +648,9 @@ fn main() -> anyhow::Result<()> {
         })?;
     }
 
-    let server = Server::http(("127.0.0.1", a.port)).map_err(|e| anyhow!("{e}"))?;
+    // 127.0.0.1 unless told otherwise: the Docker image passes 0.0.0.0, because a container's own
+    // loopback can't be reached from the host, and publishes the port on the host's loopback only.
+    let server = Server::http((a.host.as_str(), a.port)).map_err(|e| anyhow!("{e}"))?;
     eprintln!(
         "haystack-demo: open http://127.0.0.1:{}  (automatic sync mean {:.1} minutes)",
         a.port,

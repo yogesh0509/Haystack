@@ -1,6 +1,6 @@
 //! A byte-counting TCP relay between the client and electrs, for the bandwidth measurement
-//! (`docs/04-roadmap.md`, Week 3). It counts application bytes in each direction. It doesn't count
-//! TCP/IP headers, and regtest has no TLS, which a public server adds on top.
+//! (`docs/07-walkthrough.md`, case 10). It counts application bytes in each direction. It doesn't
+//! count TCP/IP headers, and regtest has no TLS, which a public server adds on top.
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};

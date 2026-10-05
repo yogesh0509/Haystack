@@ -29,10 +29,10 @@ reasoning in full; how Haystack compares with earlier work is in `docs/05-prior-
   wallet. bdk's cheaper pattern is deferred until the attacker can score it ("bdk's full-scan-then-sync
   pattern, deferred").
 - **A sibling crate to `bdk_electrum`, not a fork.** `full_scan` keeps upstream's signature, so a
-  `bdk_wallet` app adopts Haystack with five kinds of change (`docs/04-roadmap.md`, "Public API"),
-  and the crate has no `sync` or `transaction_broadcast`, so a missed change fails to compile. The
-  cost: the scan logic is a copy of upstream's to keep in step, and the regtest tests check it stays
-  equivalent.
+  `bdk_wallet` app adopts Haystack with five kinds of change (`haystack-electrum/README.md`,
+  "Adopting it in a `bdk_wallet` app"), and the crate has no `sync` or `transaction_broadcast`, so
+  a missed change fails to compile. The cost: the scan logic is a copy of upstream's to keep in
+  step, and the regtest tests check it stays equivalent.
 - **The wallet passes its expected unconfirmed transactions to the scan.** Only that list shows a
   payment has left the mempool when its replacement never touches the wallet, which is how
   upstream's `sync` detects it. The cost: the fifth kind of change for apps.
@@ -274,15 +274,24 @@ each of the 13 wallets in turn with a model fit on the other 12.
   Order alone can separate real from decoy: a structural model that also weighs position in the
   query reads above 50% precision on an otherwise well-shaped decoy set sent reals-first, against
   below 20% when the same set is shuffled, where chance is 10% (both synthetic, `tests/test_a2.py`).
-- Repeated syncs at a fixed cadence identify the wallet across IP changes.
+- A fixed cadence can identify the wallet across IP changes.
 
-**Mitigation status.** Order and batching are built: each stage's reals and decoys are shuffled
-together and cut into batches of `batch_size × padding` scripts (`haystack-electrum/src/client.rs`),
-and a test requires two scans to place the reals differently. Timing is handled by the automatic-sync
-timer in "Sync scheduling" below. On real regtest sessions with history hidden, a structural model
-trained on order and batching alone stays within about 2.5 points of chance. Timing hasn't been
-measured, because no attack reads it yet. Batch boundaries, the pauses between them, and whether an
-extension stage happens at all are visible to the server and not yet modeled.
+Each row of the table is one way the server can learn something from *how* a wallet asks, not what
+it asks. Read across a row to see whether a defence exists and whether any attack in the repo
+measures it. A defence with no attack is untested, so its score is not evidence of privacy.
+
+| Channel | Defence built | Attack in this repo |
+|---|---|---|
+| Query order | Reals and decoys are shuffled together and cut into batches of `batch_size × padding` scripts (`haystack-electrum/src/client.rs`), and a test requires two scans to place the reals differently. | The structural model scores which tenth of the query each scripthash arrived in. On real regtest sessions with history hidden it stays within about 2.5 points of chance. The synthetic comparison in the first two bullets above is the controlled version of the same test. |
+| Sync right after a payment | The automatic-sync timer in "Sync scheduling" below draws the next delay when a sync finishes, and nothing in the wallet moves it. A manual Sync tap is still exposed, and the page says so. | None. |
+| Sync cadence | The same timer uses an exponential delay, so there is no fixed interval. One limit: successive syncs send almost the same scripthashes, because decoys are fixed by the ledger so that the many-rounds attack fails. The query set itself therefore links a wallet's syncs, and the timer cannot change that. | None. |
+| Batch boundaries and pauses | None. In the honeypot log the batches arrive about 43 ms apart ("3. One sync on the wire"). | None. |
+| Whether a second stage is sent | None. A stage after the first is sent only when a keychain's run is still short of the stop gap, which usually follows a payment moving the last used index. | None. |
+| Which transactions and proofs the client fetches | Reals and decoys are fetched and cached the same way, so this channel should carry nothing. | None checks that it does. |
+| Header request at an old height | None. When the wallet's saved tip is more than 8 blocks behind, `fetch_tip_and_latest_blocks` asks for the header at the wallet's own last-sync height (0.23.2 line 645). That height can link two syncs made from different IP addresses. | None. |
+
+Every "None" in the last column is a gap in the attack suite, not a claim that the channel is safe. Until attacks
+cover them, each score overstates the privacy a real server would leave the user.
 
 ---
 
@@ -297,11 +306,10 @@ two sources, one for each case.
 
 - **Positions with no history when first queried use HMAC-direct decoys**
   (`haystack-electrum/src/decoy.rs`). This covers a new wallet's whole address set, including the
-  demo wallet's, and any position revealed later. Decoy `j` of a position is a script of the same
-  type as the real script there, filled from `HMAC-SHA256(key, keychain ‖ index ‖ j)`. For P2WPKH
-  that is `OP_0` followed by the first 20 HMAC bytes. The key is the decoy key from the A1
-  mitigation above. The real address has zero history and so does every decoy, so the server has
-  nothing to separate them on. There is no pool to fetch, store or subtract.
+  demo wallet's, and any position revealed later. These are the keyed-hash decoys of the A1
+  mitigation above: a script of the same type as the real script there. For P2WPKH that is `OP_0`
+  followed by the first 20 HMAC bytes. The real address has zero history and so does every decoy, so
+  the server has nothing to separate them on. There is no pool to fetch, store or subtract.
 - **Chain-sourced decoys cover positions that may have history when first queried. They are off by
   default** (`haystack-electrum/src/chain.rs`, `HaystackElectrumClient::with_chain_decoys`). The
   main example is a restored or imported wallet. These decoys are real addresses taken from past
@@ -390,7 +398,8 @@ built, so padding has to live inside the box.
   converts from a `FullScanResponse` (`src/wallet/mod.rs:118,130,140`), and `apply_update` accepts it
   (`:2353`). So a reimplemented `full_scan` with decoys added plugs into `wallet.apply_update()`
   unchanged, with no fork of `bdk_electrum` and no change to `bdk_wallet`. The five kinds of change
-  an app makes to adopt it are listed in `docs/04-roadmap.md`, Week 2, "Public API".
+  an app makes to adopt it are listed in `haystack-electrum/README.md`, "Adopting it in a
+  `bdk_wallet` app".
 - **Every script carries a tag saying whether it is real or a decoy.** In the code these are
   `Tag::Real(position)` and `Tag::Decoy(position, j, from_chain)` (`haystack-electrum/src/client.rs`).
   The tag travels with its script through the shuffle and the batching. Each batch is one
@@ -449,10 +458,9 @@ built, so padding has to live inside the box.
   client saves every transaction and merkle proof it fetched (`with_cache_store`); a restarted client
   loads them back (`with_saved_cache`). A test restarts with it and requires zero transaction
   fetches, and restarts without it and requires reals and decoys to be refetched together. Block
-  headers are not saved. They are cached by height, so after a reorganisation a saved header would
-  send a proof lookup to a block no longer on the chain. Proofs are saved under their block's hash,
-  so a replaced block misses the cache and is proven again. The regtest gate carries the cache
-  through its one-block reorganisation and still matches upstream exactly.
+  headers are not saved, and proofs are saved under their block's hash, so a reorganisation never
+  serves stale data (`cache_file.rs` explains why). The regtest gate carries the cache through its
+  one-block reorganisation and still matches upstream exactly.
 - **Every fetched transaction's id is checked.** A transaction whose computed txid differs from the
   one requested is rejected, so a hostile server can't answer one request with a different
   transaction. Published 0.23.2 doesn't check this. The check was ported by hand from bdk's unreleased
@@ -680,6 +688,38 @@ Worked example, the demo wallet at padding 10:
   range: 0.23.2 counts unused positions from index 0 and stops at the fiftieth in a row, which is
   index 53. `planner.rs`'s `payment_to_index_3_extends_to_53` checks this.
 
+**How far a payment extends the range.** The planner (`next_stage` in
+`haystack-electrum/src/planner.rs`, which states the rule) sends only each keychain's shortfall.
+Every position of a new stage is new to the ledger, so each gets `padding − 1` decoys, frozen and
+saved before the stage is sent. At padding 10 that is 9 decoys per new position, so a new position
+adds 10 scripthashes: its real address plus those 9. The number of new positions depends on how
+close the paid position sits to the end of the queried range:
+
+| Case | Queried before | Paid position | Trailing unused run | New positions | New decoys | New scripthashes |
+|---|---|---|---|---|---|---|
+| The next unused address, after a sync that left the wallet with history | 0–80 | 31 | 32–80 = 49 | 1 (81) | 9 | 10 |
+| Index 49 of a fresh wallet (`used_position_at_the_edge_asks_for_a_full_gap_more`) | 0–49 | 49 | 0 | 50 (50–99) | 450 | 500 |
+
+The next unused address always sits about `stop_gap` positions before the end of the range, so paying
+it costs one position. Paying the last position queried costs a full `stop_gap`. The third sync above,
+a payment to index 3 of a fresh wallet, falls between: 4 new positions and 40 scripthashes.
+
+A real session shows both stages. The log `out/sessions/p10-c0/demo.jsonl` is a wallet that already
+had history, written by the quick sessions command of `docs/07-walkthrough.md` (cases 5 to 8) and
+scored in case 7:
+
+- **Sync 1, empty ledger.** Stage 0 sends external 0–49 and internal 0–49, which is 100 × 10 = 1,000
+  scripthashes. External 0, 1, 2, 5, 6 and 30 have history, so the external run is 31–49, 19 long,
+  and the shortfall is 50 − 19 = 31. Internal 0 and 1 have history, so its run is 2–49, 48 long, and
+  the shortfall is 2. Stage 1 sends external 50–80 and internal 50–51, which is 33 × 10 = 330
+  scripthashes, all unused. Both runs now reach 50. The total is 133 positions and 1,330
+  scripthashes.
+- **Sync 2, after a payment to external 31.** Stage 0 resends the ledger's 81 external and 52
+  internal positions, the same 1,330 scripthashes in a fresh shuffle. External 31 now has history, so
+  the external run is 32–80, 49 long, and the shortfall is 1. Internal's run is still 50. Stage 1
+  sends external 81 with 9 new decoys, 10 scripthashes. The total is 134 positions and 1,340
+  scripthashes.
+
 ### 3. One sync on the wire
 
 ```mermaid
@@ -733,20 +773,11 @@ What the server can record, and whether the harness models it yet:
 
 - **The set of scripthashes in each round** is modeled. The intersection attack works on it.
 - **The order within each round** is modeled. The structural model scores which tenth of the query
-  each scripthash arrived in — the numbers are under A3 above.
+  each scripthash arrived in — the numbers are in the table under A3 above.
 - **The server's own facts about each scripthash**, its transaction count and script type, are
   modeled, but only when the log carries them. The honeypot's log doesn't.
-- **Batch boundaries and the pauses between batches** are not modeled.
-- **Which transactions and proofs the client fetches** are not modeled. The rules that reals and
-  decoys are fetched and cached the same way exist so that this channel carries nothing, but no
-  attack checks that yet.
-- **The header request at an old height** is not modeled. When the wallet's saved tip is more than 8
-  blocks behind, `fetch_tip_and_latest_blocks` asks for the header at the wallet's own last-sync
-  height (0.23.2 line 645). That height can link two syncs made from different IP addresses.
-- **When syncs happen, and how often,** is not modeled.
-
-The last four are gaps in the attack suite, not in the design. Until attacks cover them, each score
-overstates the privacy that a real server would leave the user.
+- **Batch boundaries, the second stage, fetched transactions, the old-height header, and sync
+  timing** are not modeled. Each is a row of the table under A3 above, with its defence.
 
 ### 4. What each user action does to the query
 
@@ -756,8 +787,9 @@ consequence of each thing a user can do.
 **Moving the dial applies only to positions first queried after the change.** An address's
 protection is fixed by the decoys that were first queried alongside it. The attack harness grants
 the attacker the number of real addresses that first appeared in each round (`knowledge()` in
-`attack/scoring.py`; `docs/03-metric.md`, open question 3), so a decoy that first appears in a later
-round protects nothing that came before it. Worked example, with the 100-address demo wallet:
+`attack/scoring.py`; `docs/03-metric.md`, "What the attacker is assumed to know"), so a decoy that
+first appears in a later round protects nothing that came before it. Worked example, with the
+100-address demo wallet:
 
 - At padding 5 for four rounds, the round-1 cohort is 500 scripthashes holding all 100 reals, so the
   attacker's precision is 100 ÷ 500 = 20%.
@@ -770,8 +802,8 @@ round protects nothing that came before it. Worked example, with the 100-address
 So existing positions keep their decoys forever, and lowering the dial saves no bandwidth for them.
 The ledger file is what keeps this true across a restore: without it, a restore at padding 5 after
 syncs at 10 and 20 sent 670 scripthashes instead of 1,350, and the headline fell to 2.23 bits
-(`docs/04-roadmap.md`, Week 4, "Restore path"). The demo's confirm dialog states the rule before a
-change is applied.
+(measured on the regtest wallet, through the demo's Restore section). The demo's confirm dialog
+states the rule before a change is applied.
 
 **Receiving a payment** exposes the paid address with certainty — the activation attack described
 under A1. Nothing in the current design prevents it.
@@ -799,9 +831,9 @@ servers: the honeypot or regtest's `electrs`. It never runs against a public ser
 Suppose a wallet syncs right after its owner notices a payment. The sync's timing is then tied to the
 payment, however well `Q` is padded. The server already knows when a payment landed on any address it
 has history for. What a badly timed sync adds is confirmation that this client noticed it, and
-roughly when. A fixed cadence adds a second leak: it identifies the wallet across IP changes (A3
-above). This section is the timing half of A3's mitigation, built as `SyncTimer` in
-`haystack-electrum/src/schedule.rs` and driven by the demo's sync loop.
+roughly when. A fixed cadence adds a second leak: it can identify the wallet across IP changes
+(the table under A3 above says what the timer does and doesn't cover). This section is the timing
+half of A3's mitigation, built as `SyncTimer` in `haystack-electrum/src/schedule.rs` and driven by the demo's sync loop.
 
 ### How the timer works
 
@@ -820,7 +852,7 @@ above). This section is the timing half of A3's mitigation, built as `SyncTimer`
   the chance of a sync in the next 5 minutes is `1 − e^(−5/30) = 1 − 0.846 ≈ 15.4%`. That is the same
   at the 1-minute mark, the 39-minute mark or the 5-hour mark.
 - **The default mean is 30 minutes (`DEFAULT_MEAN`).** It trades bandwidth against how stale the
-  balance gets. A mean of 30 minutes gives 24 × 60 ÷ 30 = 48 syncs a day on average. At Week 3's
+  balance gets. A mean of 30 minutes gives 24 × 60 ÷ 30 = 48 syncs a day on average. At the
   measured 253.5 KiB per steady-state sync (the paid regtest wallet at padding 10, with its saved
   cache), that is 48 × 253.5 = 12,168 KiB, about 11.9 MiB a day. With an exponential delay, the
   balance's age at a random moment is exponential with the same mean, so it is 30 minutes old on

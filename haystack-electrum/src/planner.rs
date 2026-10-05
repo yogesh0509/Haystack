@@ -5,10 +5,19 @@
 //! upstream's walk would reach, plus any the ledger already froze, since append-only means a frozen
 //! position is queried every round even where the walk would stop before it.
 //!
-//! A keychain's shortfall is known before any answer arrives, and answers can only raise it: a used
-//! position resets the unused run, an unused one never shortens what's needed. So the whole
-//! shortfall goes out as one stage, and another stage is needed only when an answer reveals a used
-//! position near the end. A never-paid wallet finishes in one stage.
+//! The rule, applied to each keychain separately by `next_stage`:
+//!
+//! 1. First stage: every position the ledger already holds, or positions `0..stop_gap` if it holds
+//!    fewer, which is `max(ledger length, stop_gap)`.
+//! 2. After each stage: count the trailing unused run, the unused positions in a row at the end of
+//!    everything queried so far. If it is at least `stop_gap`, the keychain is done. Otherwise the
+//!    next stage is the next `stop_gap − run` positions after the last one queried.
+//! 3. Repeat until every keychain is done.
+//!
+//! A keychain's shortfall is known before any answer arrives, and answers can only raise it, so the
+//! whole shortfall goes out as one stage, and another stage is needed only when an answer reveals a
+//! used position near the end. A never-paid wallet finishes in one stage. What a payment adds to the
+//! query is worked through in `docs/02-design.md`, diagram 2.
 
 use std::collections::BTreeMap;
 

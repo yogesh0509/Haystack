@@ -1,4 +1,4 @@
-"""Bandwidth against score: the Week 3 headline result (docs/04-roadmap.md), from regtest's session generator.
+"""Bandwidth against score: the headline result (docs/07-walkthrough.md, case 10), from regtest's session generator.
 
 At each padding level and chain share every wallet is scored in turn, with the structural model fit on all the other
 wallets' sessions (leave one out), so no wallet is ever scored by a model that saw it. The demo wallet's

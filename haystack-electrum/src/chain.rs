@@ -5,12 +5,9 @@
 //! type, and that output's history, which must be between 1 and `max_history` transactions.
 //!
 //! **This leaks, and the leak is accepted for now.** Every lookup here goes to the server the wallet
-//! syncs with, and a real wallet never makes them: it only fetches transactions that appeared in
-//! its own addresses' histories. A server that reads its own log can match "fetched a random
-//! transaction, checked an output's history" against "queried that output" and name every chain
-//! decoy, which leaves a restored wallet's funded addresses as exposed as with HMAC-direct decoys
-//! alone (`docs/02-design.md`, "Where decoys come from"). The lookups are recorded as `Probe`s in
-//! the session log, so that attack can be written later; the harness doesn't read them yet.
+//! syncs with, and a real wallet never makes them, so a server that reads its own log can name every
+//! chain decoy (`docs/02-design.md`, "Where decoys come from"). The lookups are recorded as `Probe`s
+//! in the session log, so that attack can be written later; the harness doesn't read them yet.
 //!
 //! The draws are deterministic per position and decoy number, from the decoy key, but the result
 //! also depends on the chain, so a chosen script is stored in the ledger rather than recomputed.

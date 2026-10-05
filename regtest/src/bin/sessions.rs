@@ -1,5 +1,5 @@
-//! Generates the labelled sessions behind Week 3's structural score and bandwidth curve
-//! (`docs/04-roadmap.md`, option B), on a fresh regtest chain:
+//! Generates the labelled sessions behind the structural score and bandwidth curve
+//! (`attack/README.md`, "The two attacks"), on a fresh regtest chain:
 //!
 //! - the demo wallet from `build_history`, which is the one scored;
 //! - `--wallets` training wallets with random histories from `population.rs`'s assumed tables;
@@ -9,8 +9,9 @@
 //!   the chain, found through the same server (`haystack_electrum::chain`). Sessions land in
 //!   `p<padding>-c<share as a percentage>/`, for example `p10-c30/`.
 //!
-//! This is also the reset (Week 3 safeguard 3): it deletes `--out` before writing, so one run
-//! replaces the whole training set with sessions from the client as currently built.
+//! This is also the reset among the training safeguards (`attack/README.md`): it deletes `--out`
+//! before writing, so one run replaces the whole training set with sessions from the client as
+//! currently built.
 //!
 //! ```text
 //! cargo run --release -p haystack-regtest --bin sessions -- --out regtest/sessions

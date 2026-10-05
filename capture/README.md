@@ -4,10 +4,8 @@ A small Rust binary (`haystack-capture`) that runs stock `bdk_wallet` 2.1.0 and 
 full scans against an Electrum server and writes down which scripthashes the wallet itself says it
 queried. It links no Haystack code. Its one job is the unpadded baseline: the answer key that shows
 what a server really learns from an ordinary wallet, recorded from the wallet's side rather than the
-server's.
-
-A scripthash is the hashed form of an address that Electrum uses as its lookup key (SHA-256 of the
-script pubkey, bytes reversed, the same as `scripts/scripthash.py`).
+server's. (A scripthash is the hashed form of an address that Electrum uses as its lookup key; see
+`docs/00-problem.md` §1.)
 
 ## Why it exists
 
@@ -19,7 +17,23 @@ takes two independent records of the same scan:
 - **What the wallet really sent.** This is the answer key, called ground truth. Only the wallet can
   say which queries were its own. Capture records it.
 
-`attack` then compares the two. If they match exactly, the claim is measured, not assumed.
+In the committed fixtures the honeypot's first logged query for connection 1 is
+`get_history d17914262000…`, and capture's round 0 starts with `external index 0 d17914262000…`:
+the same scripthash, the wallet's first receive address, seen arriving and recorded as sent.
+`python3 -m attack score --honeypot … --capture … --tier T1` then reads both files and does two
+things with them:
+
+1. **A consistency check.** `check_plain()` in `attack/observe.py` compares what the server received
+   with what the wallet sent. `unexpected` counts scripthashes the server got that the wallet didn't
+   send, and `missing` counts the reverse. For a plain scan both must be 0 in every round, or the
+   score is not trusted.
+2. **The score.** The attacker guesses which scripthashes are real from the honeypot log alone, and
+   the guesses are graded against capture's list. For plain Electrum every guess is right, so the
+   table reads 0.00 bits and 100% precision.
+
+If the two records match exactly, the claim is measured, not assumed. `tests/test_plain_capture.py`
+does this on the committed fixtures (`tests/README.md` describes them), and running `capture/` with
+`--rounds 6` reproduces `tests/fixtures/bdk-capture-truth.json` exactly.
 
 ## What it records
 
@@ -49,34 +63,6 @@ The full round has 100 entries. The output is one JSON file:
  "stop_gap": 50, "batch_size": 5,
  "rounds": [{"round": 0, "queried": [{"keychain": "external", "index": 0, "scripthash": "..."}]}]}
 ```
-
-## How it fits with the honeypot and `attack`
-
-The honeypot and capture record the same scan from two sides. In the committed fixtures the
-honeypot's first logged query for connection 1 is `get_history d17914262000…`, and capture's round 0
-starts with `external index 0 d17914262000…`. That is the same scripthash, the wallet's first receive
-address: the honeypot saw it arrive, and capture recorded that the wallet sent it. The honeypot log
-has 600 entries, which is 6 connections × 100 scripthashes.
-
-`python3 -m attack score --honeypot … --capture … --tier T1` reads both files:
-
-- `--honeypot` is the adversary's view. The honeypot tags each query with a connection number, and
-  `attack` treats each connection as one round.
-- `--capture` is the answer key: each round's `queried` list is the set of real scripthashes.
-- `--tier T1` is how much the attacker may use: every round, through the many-rounds attack.
-
-It does two things with them:
-
-1. **A consistency check.** `check_plain()` in `attack/observe.py` compares what the server received
-   with what the wallet sent. `unexpected` counts scripthashes the server got that the wallet didn't
-   send, and `missing` counts the reverse. For a plain scan both must be 0 in every round, or the
-   score is not trusted.
-2. **The score.** The attacker guesses which scripthashes are real from the honeypot log alone, and
-   the guesses are graded against capture's list. For plain Electrum every guess is right, so the
-   table reads 0.00 bits and 100% precision.
-
-`tests/test_plain_capture.py` does this on the committed fixtures. Those hold six rounds, and running
-`capture/` with `--rounds 6` reproduces `tests/fixtures/bdk-capture-truth.json` exactly.
 
 ## Run it
 

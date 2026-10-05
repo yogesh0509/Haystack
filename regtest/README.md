@@ -52,9 +52,9 @@ and 1 used.
 
 ## The correctness gate (`tests/gate.rs`)
 
-`docs/04-roadmap.md`: a padded sync and a plain sync must produce the same wallet state. Three
-rounds, each a full scan by upstream `bdk_electrum` and by `HaystackElectrumClient` at padding 10,
-each into its own copy of the wallet:
+A padded sync and a plain sync must produce the same wallet state. Three rounds, each a full scan by
+upstream `bdk_electrum` and by `HaystackElectrumClient` at padding 10, each into its own copy of the
+wallet:
 
 1. The history above.
 2. After a block confirms the two unconfirmed transactions and a new payment lands on external 60,
@@ -83,8 +83,8 @@ Haystack `full_scan` must still count it, which shows the gap the expectations c
 
 ## Training sessions and the bandwidth curve (`src/bin/sessions.rs`)
 
-Week 3's structural attacker learns from labelled sessions of other wallets (`docs/04-roadmap.md`,
-option B). This binary builds them on one fresh regtest chain:
+The structural attacker learns from labelled sessions of other wallets (`attack/README.md`, "The two
+attacks"). This binary builds them on one fresh regtest chain:
 
 ```bash
 cargo run --release -p haystack-regtest --bin sessions -- --out regtest/sessions   # about 15 minutes
@@ -115,6 +115,6 @@ python3 -m attack curve --dir regtest/sessions
   `bandwidth.json`. It counts application bytes only: no TCP/IP headers, and no TLS, which regtest
   doesn't use.
 
-The binary deletes `--out` before writing. That makes it the training set's reset: one run replaces
-every session with ones from the client as currently built, and each session line records that
-client's version and source hash. The output is about 170 MB and is not committed (`.gitignore`).
+The binary deletes `--out` before writing, so one run replaces every session with ones from the
+client as currently built; this is the reset among the training safeguards in `attack/README.md`.
+The output is about 170 MB and is not committed (`.gitignore`).

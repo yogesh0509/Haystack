@@ -13,12 +13,11 @@ Two kinds of wallet appear:
   with change, and has unconfirmed transactions. Its first sync through Haystack is exactly a
   *restored* wallet: a fresh wallet whose addresses already have history.
 
-The score in every table is the attacker's **precision**. The attacker guesses as many
-scripthashes as the wallet really has, and precision is the share of those guesses that are right.
-The `bits` column converts it: 0.00 means every guess was right, and `log2(padding)` (3.32 at padding
-10) means the guesses were no better than random. `funded %` is the same precision restricted to the
-scripthashes that have history, which are the funded addresses. `docs/03-metric.md` has the full
-definitions.
+The score in every table is the attacker's **precision**: it guesses as many scripthashes as the
+wallet really has, and precision is the share of those guesses that are right. In the `bits` column,
+0.00 means every guess was right and `log2(padding)` (3.32 at padding 10) means the guesses were no
+better than random. `funded %` is the same precision among the scripthashes that have history. Every
+column is defined in `attack/README.md`, "Score columns".
 
 ## Before you start
 
@@ -133,33 +132,23 @@ There are two tests.
 
 ### Test 1: padded and plain scans end in the same wallet
 
-The paid wallet's history includes address reuse, a payment far out at external 30, spends with
-change and two unconfirmed transactions. A plain copy and a Haystack copy (padding 10) of the wallet
-each scan, and their snapshots must match after three rounds:
-
-1. **The initial history.** Both reach external index 30 and internal index 1, with 8 transactions,
-   2 of them unconfirmed.
-2. **A new block and a payment.** The block confirms the two pending transactions, then 0.03 BTC
-   arrives at external 60, past the range Haystack first scanned, so it needs a second stage.
-3. **A one-block reorganisation.** The chain replaces its newest block, so the transactions in it
-   move to the new block. The Haystack client keeps its saved cache of merkle proofs (proofs that a
-   transaction is in a block) across rounds, so this also checks that proofs saved for the old block
-   are not served for the new one.
-
-The test also checks that every decoy returns no history, so server answers never leak into the
-wallet.
+A plain copy and a Haystack copy (padding 10) of the paid wallet each scan it, and their snapshots
+must match after three rounds: its initial history (8 transactions, 2 of them unconfirmed, reaching
+external index 30), a new block plus a payment to external 60 that makes Haystack need a second
+stage, and a one-block reorganisation. The Haystack copy keeps its saved cache across rounds, so
+the last round also checks that merkle proofs (proofs that a transaction is in a block) saved for
+the old block are not served for the new one. The test also checks that every decoy returns no
+history, so server answers never leak into the wallet. `regtest/README.md`, "The correctness
+gate", lists what each round does.
 
 ### Test 2: a payment dropped from the mempool leaves the balance
 
-An unconfirmed payment can vanish if someone double-spends the same coins with a higher fee
-(replace-by-fee). The wallet still remembers it, and the replacement never touches the wallet's
-addresses, so the wallet sees no conflict. Only a list of expected transactions reveals the payment
-is gone. That is the list `full_scan_expecting` takes.
-
-The node pays the wallet 0.02 BTC unconfirmed, then double-spends it to itself. Upstream's `sync`
-and Haystack's `full_scan_expecting` must both drop the payment and agree on the balance. A plain
-Haystack scan, which has no expected list, still shows 0.02 BTC pending. That is deliberate: it shows
-the gap the list closes.
+The node pays the wallet 0.02 BTC unconfirmed, then double-spends the same coins to itself with a
+higher fee, so the payment leaves the mempool without ever touching the wallet's addresses.
+Upstream's `sync` and Haystack's `full_scan_expecting` must both drop the payment and agree on the
+balance, while a plain Haystack scan, which has no expected-transactions list, still shows 0.02 BTC
+pending. That is deliberate: it shows the gap the list closes (`docs/02-design.md`,
+"haystack-electrum").
 
 **What it means.** For these scenarios (fresh history, pending transactions that confirm, a
 one-block reorganisation, a restart with saved cache, and a dropped payment), privacy costs
@@ -234,7 +223,7 @@ address, reads 3.24.
 
 **What it means.** An address that goes from no history to some while being queried must be real,
 since no decoy is ever paid. The many-rounds attacker marks it as certain. This is accepted as a
-limitation (`docs/02-design.md`, A1).
+limitation (`docs/02-design.md`, A1). The round also grows by one position; `docs/02-design.md`, diagram 2, explains why only one.
 
 ### Case 8: a restored wallet with decoys from the chain
 
@@ -255,10 +244,10 @@ history: about 8 out of 120, or 7%, now that a tenth of the decoys have history 
 **What it means, and what it doesn't.** A tenth of the decoys are now real addresses from the chain
 that have history, so funded addresses no longer stand out to this attacker. **But this holds only
 against a server that ignores its own log.** The client found those decoys by asking the same
-server for random transactions and their outputs' histories, which a real wallet never does. A
-server that reads that log can cross off every chain decoy and is back at case 6. That attack is
-described in `docs/02-design.md` ("Where the chain-sourced pool comes from") and deliberately not
-built. You can see the evidence it would use in the session log's `probes`:
+server, which can cross off every chain decoy and is back at case 6. That attack, and why regtest
+scores for chain decoys are optimistic, are described in `docs/02-design.md` ("Where the
+chain-sourced pool comes from"). The attack is deliberately not built. You can see the evidence it
+would use in the session log's `probes`:
 
 ```bash
 python3 -c "
@@ -273,8 +262,6 @@ print(len(r['probes']), 'lookups;', len(kept), 'candidates kept;',
 From the quick run this printed
 `10034 lookups; 110 candidates kept; 110 of 110 chain decoys were looked up first`. Every chain decoy
 appears in the lookups before it appears in the query. That match is the attack.
-On regtest the result is also optimistic for a second reason: the chain decoys are the other regtest
-wallets' addresses, whose histories come from the same assumed tables as the real wallet's.
 
 ## Case 9: restarts send exactly the same query
 
@@ -325,8 +312,9 @@ default paddings 1, 2, 5, 10 and 20 and chain shares 0, 10% and 30%) takes about
 
 **What it shows.** The never-paid wallet padded against a public server instead of the honeypot.
 This sends the demo wallet's padded query to a third party, so it is opt-in. It was run against
-`fortress.qtornado.com` on 2026-10-02 (`docs/04-roadmap.md`, Week 4). The demo pins a server's
-certificate on first use, which a self-signed server such as `fortress.qtornado.com` needs. Press
+`fortress.qtornado.com` on 2026-10-02 (measurements in `docs/04-roadmap.md`, "Week 4: demo and
+writeup"). The demo pins a server's certificate on first use, which a self-signed server such as
+`fortress.qtornado.com` needs. Press
 Sync now on the Wallet tab of `http://127.0.0.1:7878`; the Lab tab shows the score and what the
 server received.
 
@@ -340,5 +328,8 @@ python3 -m attack score --session out/demo/ssl___fortress.qtornado.com_50002/hay
 - **A server that reads its own lookup log** (case 8's caveat): described, not built.
 - **On-chain clustering** (`T3`): linking addresses through shared transactions isn't built. Single
   chain decoys share no transactions, while a real wallet's addresses do.
-- **Timing across syncs**: the automatic sync timer exists (`schedule.rs`), but no attack reads
-  sync times yet.
+- **Timing and other behaviour across syncs**: no attack reads sync times, batch pauses or fetched
+  transactions yet (the table under A3 in `docs/02-design.md`).
+- **Script types other than P2WPKH**: every wallet in these cases uses `wpkh(...)` descriptors.
+  The engine builds decoys for P2PKH, P2SH, P2WSH and P2TR too, but only a unit test covers them
+  (`docs/04-roadmap.md`, "Known limitations").

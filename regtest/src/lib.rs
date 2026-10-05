@@ -1,14 +1,8 @@
 //! A real wallet history on a local regtest chain, for testing `haystack-electrum` against a real
-//! Electrum server instead of an in-memory fake or the honeypot.
-//!
-//! `bdk_testenv` starts `bitcoind` in regtest mode and `electrs` indexing it — the same setup
-//! upstream `bdk_electrum` is tested against. Both binaries are downloaded at build time and checked
-//! against SHA-256 hashes pinned in the `bitcoind` and `electrsd` crates (see `regtest/README.md`).
-//!
-//! `build_history` gives a BIP84 wallet the history a real one has: receives, address reuse, a
-//! batched payout, an unpaid gap, a used address deep in the range, a spend with two inputs and
-//! change, and unconfirmed transactions in both directions. The node's own wallet plays everyone
-//! else. Regtest coins are worthless, so the wallet keeps private keys and signs its own spends.
+//! Electrum server instead of an in-memory fake or the honeypot. `bdk_testenv` starts `bitcoind` and
+//! `electrs` for it, and `build_history` gives a wallet the history a real one has. The node's own
+//! wallet plays everyone else, and regtest coins are worthless, so the wallet keeps private keys and
+//! signs its own spends. `regtest/README.md` describes the setup and the history step by step.
 
 use std::str::FromStr;
 use std::time::{Duration, Instant};

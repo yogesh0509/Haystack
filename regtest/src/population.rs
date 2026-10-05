@@ -1,6 +1,6 @@
 //! Training wallets for the structural attacker: other people's wallets, paid on the same regtest
 //! chain, whose labelled Haystack sessions teach the attacker what real addresses and decoys look
-//! like (`docs/04-roadmap.md`, Week 3, option B).
+//! like (`attack/README.md`, "The two attacks").
 //!
 //! **Every number in this file is an assumption, not a measurement.** These are the real side of
 //! the agreed split: the history of personal wallets, which can't be measured on chain
