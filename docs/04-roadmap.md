@@ -174,13 +174,13 @@ with the same wallet code as `bdk_wallet`'s own Electrum example.
       restarts and the bandwidth curve, each with its command and expected output.
 - [x] **Write-up**: the design decisions and their trade-offs on one page at the top of
       `docs/02-design.md`, and the related work in `docs/05-prior-art.md`.
-- [ ] **README and a clean clone**: setup for Linux, macOS and Windows (through WSL2), the
+- [x] **README and a clean clone**: setup for Linux, macOS and Windows (through Docker or WSL2), the
       five-minute check, the demo's happy path and the known limitations, followed from a fresh
       clone.
-- [ ] **Demo video** (3–5 minutes), linked near the top of the README.
-- [ ] **A Docker image, if time allows**: one command that builds and runs the project identically
-      on Linux, macOS and Windows, including the local test chain, which can't run natively on
-      Windows because `electrs` has no Windows build there.
+- [x] **Demo video** (3–5 minutes), linked near the top of the README.
+- [x] **A Docker image** (`Dockerfile`): `docker build -t haystack .` then `docker run -it --rm -p
+      127.0.0.1:7878:7878 -v haystack-out:/haystack/out haystack` runs the regtest demo the same way
+      on Linux, macOS and Windows.
 
 ## Known limitations
 

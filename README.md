@@ -7,7 +7,11 @@ wallet's real addresses among decoys, then measures how well the hiding works by
 
 > Built for BOSS Battle — Cypherpunk track, *Private Electrum Sync* problem statement.
 
-**Demo video (3–5 minutes):** _link to be added_
+**Demo video (3–5 minutes):** [Haystack, Hiding Wallet Addresses with Decoys — watch on Loom](https://www.loom.com/share/5c3719e5ebd44815b146ae9ff35d468d)
+
+<a href="https://www.loom.com/share/5c3719e5ebd44815b146ae9ff35d468d">
+  <img src="https://www.loom.com/v1/videos/5c3719e5ebd44815b146ae9ff35d468d/thumbnail.gif" alt="Haystack demo video: click to watch on Loom" width="480">
+</a>
 
 ---
 
