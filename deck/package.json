@@ -1,0 +1,13 @@
+{
+  "name": "haystack-deck",
+  "private": true,
+  "description": "Builds haystack.pptx, the Haystack project overview deck",
+  "license": "GPL-3.0-only",
+  "type": "commonjs",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "3.12.0"
+  }
+}
