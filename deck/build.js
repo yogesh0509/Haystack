@@ -374,81 +374,7 @@ pres.addSection({ title: "How it holds up" });
     "Keeping the same decoys forever leaves nothing to remove, which is the rule Haystack follows; the table is the real output of python3 -m attack strategies.");
 }
 
-// ---- 7. The rule -----------------------------------------------------------------------------
-
-{
-  const s = content("Same decoys every sync, never withdrawn", "How it holds up");
-  // How a decoy is derived (haystack-electrum/src/key.rs, decoy.rs).
-  const fy = 1.6, fh = 1.15;
-  const boxes = [
-    [L.MX, 2.45, "Public keys", "the wallet's account xpubs"],
-    [3.4, 2.55, "Decoy key", "tagged SHA-256 of the xpubs"],
-    [6.3, 3.5, "HMAC-SHA256(key,\nkeychain ‖ index ‖ j)", null],
-    [10.15, L.RIGHT - 10.15, "Decoy j", "same script type as the real one"],
-  ];
-  boxes.forEach(([x, w, t, sub], i) => {
-    component(s, x, fy, w, fh, t, sub, "device", i === 2 ? { monoTitle: true, titleSize: FS.label } : {});
-    if (i < boxes.length - 1) arrow(s, x + w + 0.05, fy + fh / 2, boxes[i + 1][0] - 0.05, fy + fh / 2, { color: C.text1 });
-  });
-
-  // Three syncs: the same blocks every time; the payment's new address brings its own decoys.
-  const sz = 0.17, pt = 0.215, bw = 10 * pt, bx0 = 3.4, bstep = 2.3, ry = [3.4, 4.15, 4.9];
-  const block = (x, y) => { for (let i = 0; i < 10; i++) square(s, x + i * pt, y, sz, i === 0 ? "real" : "decoy"); };
-  ["Sync 1", "Sync 2", "Sync 3, after a payment"].forEach((label, r) => {
-    text(s, label, { x: L.MX, y: ry[r] - 0.1, w: 2.85, h: 0.4, fontSize: FS.label, bold: true });
-    for (let b = 0; b < 3; b++) block(bx0 + b * bstep, ry[r]);
-  });
-  ["address 0", "address 1", "address 2", "new address"].forEach((t, b) => {
-    text(s, t, { x: bx0 + b * bstep, y: 2.98, w: bw, h: 0.33, fontSize: FS.small, color: C.text2, align: "center" });
-  });
-  block(bx0 + 3 * bstep, ry[2]);
-  s.addShape(pres.ShapeType.roundRect, { x: bx0 + 3 * bstep - 0.12, y: ry[2] - 0.13, w: bw + 0.24 - (pt - sz), h: sz + 0.26, rectRadius: 0.06,
-    fill: { color: C.accent1, transparency: 100 }, line: { color: C.accent1, width: 1.5, dashType: "dash" } });
-  text(s, "9 new decoys, in the same sync", { x: L.RIGHT - 3.2, y: ry[2] + 0.38, w: 3.2, h: 0.35, fontSize: FS.small, color: C.accent1, bold: true, align: "right" });
-  text(s, "Each block is one address and its decoys, drawn sorted; on the wire they are shuffled.", {
-    x: L.MX, y: 5.75, w: L.CW, h: 0.4, fontSize: FS.small, color: C.text2 });
-  text(s, "The ledger saves each count before anything is sent, so a crash or a reinstall sends the same set again.", {
-    x: L.MX, y: 6.2, w: L.CW, h: 0.45, fontSize: FS.body });
-  s.addNotes(
-    "Decoy j for a position is an HMAC-SHA256 of the keychain, the index and j, under a key that is a tagged SHA-256 of the wallet's account xpubs, its extended public keys. " +
-    "Because the key comes from the wallet's own public keys, every device and every reinstall derives exactly the same decoys without being told anything. " +
-    "So syncs 1 and 2 send byte-identical sets, and the intersection attack finds nothing to remove. " +
-    "When a payment moves the wallet's last used address forward, the new position arrives with its own 9 new decoys in the same sync; an address first sent alone would stand out in the difference between two syncs. " +
-    "The ledger records each count before the decoys go out, so a crash between the two can't hand a position a different set next time.");
-}
-
-// ---- 8. The cost -----------------------------------------------------------------------------
-
-{
-  const s = content("Privacy costs bandwidth, not correctness", "How it holds up");
-  card(s, L.MX, 1.55, 6.15, 3.85);
-  text(s, "KiB per steady-state sync, paid regtest wallet", { x: L.MX + 0.3, y: 1.7, w: 5.6, h: 0.4, fontSize: FS.label, color: C.text2 });
-  s.addChart(pres.ChartType.bar, [{ name: "KiB per sync", labels: ["Plain Electrum", "Haystack, padding 10"], values: [30.14, 253.42] }], {
-    x: L.MX + 0.2, y: 2.1, w: 5.75, h: 3.2, barDir: "col", barGapWidthPct: 70,
-    chartColors: [THEME.colors.accent1], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.00",
-    dataLabelFontSize: FS.label, dataLabelColor: THEME.colors.dk1, dataLabelFontFace: "+mn-lt", dataLabelFontBold: true,
-    catAxisLabelFontSize: FS.label, catAxisLabelColor: THEME.colors.dk1, catAxisLabelFontFace: "+mn-lt",
-    catAxisLineShow: true, catAxisLineColor: THEME.colors.accent5, valAxisHidden: true, valAxisMinVal: 0, valAxisMaxVal: 300,
-    valGridLine: { style: "none" }, catGridLine: { style: "none" }, showLegend: false, showTitle: false,
-  });
-
-  card(s, 7.05, 1.55, L.RIGHT - 7.05, 3.85);
-  text(s, "8.4×", { x: 7.4, y: 1.75, w: 5, h: 0.95, fontSize: FS.stat, bold: true, valign: "middle" });
-  text(s, "the bytes of a plain sync (253.42 ÷ 30.14 KiB)", { x: 7.4, y: 2.7, w: 5, h: 0.4, fontSize: FS.label, color: C.text2 });
-  text(s, "11.9 MiB a day", { x: 7.4, y: 3.4, w: 5, h: 0.8, fontSize: 40, bold: true, valign: "middle" });
-  text(s, "48 automatic syncs at the default 30-minute average", { x: 7.4, y: 4.2, w: 5, h: 0.75, fontSize: FS.label, color: C.text2 });
-
-  card(s, L.MX, 5.65, L.CW, 1.1);
-  badge(s, L.MX + 0.3, 5.92, 0.56, "✓", C.accent3);
-  text(s, "Same balance, transactions, coins and chain tip as plain bdk_electrum, through a reorganisation and a double-spend (cargo test -p haystack-regtest).", {
-    x: L.MX + 1.1, y: 5.78, w: L.CW - 1.35, h: 0.85, fontSize: FS.body, valign: "middle" });
-  s.addNotes(
-    "The price of padding is bandwidth. On the paid regtest wallet's second sync, with its cache warm, a plain sync moved 30.14 KiB and padding 10 moved 253.42 KiB: 253.42 divided by 30.14 is 8.4 times (docs/07-walkthrough.md, case 10). " +
-    "Automatic syncs run on a random timer averaging 30 minutes, which is 24 times 60 divided by 30, or 48 syncs a day; 48 times 253.5 KiB is about 11.9 MiB a day (docs/02-design.md, 'Sync scheduling'). " +
-    "What padding never costs is correctness: the regtest tests run Haystack and plain bdk_electrum against a real electrs and require identical balances, transactions, unspent coins, used indices and chain tip, through a one-block reorganisation and a double-spent payment.");
-}
-
-// ---- 9. Architecture -------------------------------------------------------------------------
+// ---- 7. Architecture -------------------------------------------------------------------------
 
 pres.addSection({ title: "Inside the repo" });
 {
@@ -489,7 +415,7 @@ pres.addSection({ title: "Inside the repo" });
     "capture and scripts record what an unmodified wallet sends and include the honeypot server, the baseline every score is calibrated against.");
 }
 
-// ---- 10. Product glimpse ---------------------------------------------------------------------
+// ---- 8. Product glimpse ----------------------------------------------------------------------
 
 {
   const s = content("The demo: plain and Haystack side by side", "Inside the repo");
@@ -511,41 +437,91 @@ pres.addSection({ title: "Inside the repo" });
     "This is the demo wallet's Lab tab, captured for this deck after one sync of each copy on a local regtest chain. " +
     "Both copies show the same balance and the same 8 transactions, which is the correctness claim made visible. " +
     "Plain Electrum sent 133 addresses and both attackers read 0.00 bits; Haystack sent 1,330 and read 3.32 bits from the attacker that compares syncs and 2.46 from the attacker trained on other wallets. " +
-    "The data line reads 6.7 times the plain sync because this is a first sync; the 8.4 times on the bandwidth slide is the steady-state second sync with a warm cache. " +
-    "Both copies also find 8 of 8 addresses with coin history: made-up decoys never have history, so a restored wallet's funded addresses stand out, which is the next slide.");
+    "The data line reads 6.7 times the plain sync because this is a first sync; once the cache is warm, a padded sync costs about 8.4 times a plain one (docs/07-walkthrough.md, case 10). " +
+    "Both copies also find 8 of 8 addresses with coin history: made-up decoys never have history, so a restored wallet's funded addresses stand out; that is Haystack's main known limit.");
 }
 
-// ---- 11. Limits ------------------------------------------------------------------------------
+// ---- 9. Demo, wallet tab ---------------------------------------------------------------------
 
-pres.addSection({ title: "Limits and next steps" });
+// A named control on the demo page, shown as a label (not a drawing of the page).
+function chip(slide, x, y, w, label, on) {
+  slide.addText(label, { shape: pres.ShapeType.roundRect, rectRadius: 0.08, x, y, w, h: 0.42,
+    fill: { color: on ? C.accent1 : C.accent6 }, line: { color: on ? C.accent1 : C.accent5 },
+    fontSize: FS.label, bold: true, color: on ? C.background1 : C.text1, align: "center", valign: "middle", margin: 0 });
+}
+const halfW = (L.CW - 0.3) / 2, halfX = [L.MX, L.MX + halfW + 0.3];
+
 {
-  const s = content("What Haystack does not hide yet", "Limits and next steps");
-  const cw = 5.92, ch = 2.3, gx = L.CW - 2 * cw;
-  const items = [
-    ["A restored wallet's funds", "Made-up decoys never have history, so any address with history must be real."],
-    ["An address paid while watched", "It goes from no history to some, and nobody pays a decoy."],
-    ["Attacks nobody has built", "On-chain linking and sync timing aren't scored, so the score covers only the attacks in the repo."],
-    ["Obfuscation, not cryptography", "The bound is measured, not proven. Private information retrieval would prove it, at a cost no Electrum server supports today."],
-  ];
-  items.forEach(([head, body], i) => {
-    const x = L.MX + (i % 2) * (cw + gx), y = 1.55 + Math.floor(i / 2) * (ch + 0.3);
-    card(s, x, y, cw, ch);
-    badge(s, x + 0.3, y + 0.3, 0.5, "!", C.accent4);
-    text(s, head, { x: x + 1.0, y: y + 0.28, w: cw - 1.3, h: 0.55, fontSize: FS.lead, bold: true, valign: "middle" });
-    text(s, body, { x: x + 1.0, y: y + 0.95, w: cw - 1.3, h: 1.2, fontSize: FS.body, color: C.text2 });
+  const s = content("Wallet tab: automatic sync and the dial", "Inside the repo");
+  for (const x of halfX) card(s, x, 1.55, halfW, 5.15);
+  const ix = halfX[0] + 0.35, iw = halfW - 0.7;
+  text(s, "Automatic sync", { x: ix, y: 1.8, w: iw, h: 0.5, fontSize: FS.lead, bold: true });
+  [
+    "Fires at random times: every 2 minutes on average in the demo, 30 in the product.",
+    "Runs a full scan through Haystack: every address with its decoys, only real answers kept.",
+    "The attacker then scores the sync, and the page shows what it learned.",
+  ].forEach((t, i) => {
+    const y = 2.5 + i * 1.05;
+    badge(s, ix, y, 0.45, String(i + 1), C.text1);
+    text(s, t, { x: ix + 0.65, y: y - 0.05, w: iw - 0.65, h: 0.95, fontSize: FS.body });
   });
+  text(s, "It never fires because you opened the app or got paid. Sync now is there too, but the server sees its timing.", {
+    x: ix, y: 5.65, w: iw, h: 0.85, fontSize: FS.label, color: C.text2 });
+
+  const jx = halfX[1] + 0.35, jw = halfW - 0.7;
+  text(s, "Privacy dial", { x: jx, y: 1.8, w: jw, h: 0.5, fontSize: FS.lead, bold: true });
+  text(s, "Padding", { x: jx, y: 2.45, w: jw, h: 0.4, fontSize: FS.label, bold: true, color: C.text2 });
+  [2, 5, 10, 20].forEach((v, i) => chip(s, jx + i * 1.0, 2.9, 0.85, String(v), v === 10));
+  text(s, "Chain decoys (regtest only)", { x: jx, y: 3.5, w: jw, h: 0.4, fontSize: FS.label, bold: true, color: C.text2 });
+  ["0%", "10%", "30%"].forEach((v, i) => chip(s, jx + i * 1.0, 3.95, 0.85, v, i === 0));
+  text(s, [
+    { text: "Apply asks to confirm; the next sync uses the new setting.", options: { breakLine: true } },
+    { text: "Addresses the server has seen keep their decoys. The page shows each setting's cost per sync and per day." },
+  ], { x: jx, y: 4.6, w: jw, h: 1.9, fontSize: FS.body, paraSpaceAfter: 8 });
   s.addNotes(
-    "These limits are stated in the README and measured where possible, not discovered later. " +
-    "A restored wallet's funded addresses stay exposed: decoys taken from the chain would fix that against the structural attacker, but Haystack finds them by asking the same server, which could name every one from its own log, so an independent lookup server is the planned fix. " +
-    "A payment to a watched address exposes it with certainty, because an address that goes from no history to some must be real. " +
-    "On-chain clustering and timing attacks aren't built, and every score holds only against the attacks in the repo. " +
-    "Finally, this is obfuscation: the privacy is an empirical score, not a cryptographic guarantee.");
+    "The Wallet tab is the Haystack wallet as a user would see it. " +
+    "It syncs by itself on an exponential timer, two minutes on average at demo speed and thirty in the product, and the delay is drawn when a sync finishes so nothing the user does moves it (docs/02-design.md, 'Sync scheduling'). " +
+    "Each sync is a padded full scan, after which the repo's attacker reads the session log and the page says, in two words, how hidden the addresses and the funded addresses are. " +
+    "The dial offers padding 2, 5, 10 or 20, the settings the trained attacker was trained at, and on regtest a share of chain decoys, 0, 10 or 30 percent; Apply asks for confirmation first. " +
+    "A new setting applies only to addresses queried after the change, because withdrawing a decoy the server has already seen would mark it as a decoy.");
 }
 
-// ---- 12. Getting started ---------------------------------------------------------------------
+// ---- 10. Demo, lab tab -----------------------------------------------------------------------
 
 {
-  const s = content("Try it yourself", "Limits and next steps");
+  const s = content("Lab tab: live payments and restore", "Inside the repo");
+  for (const x of halfX) card(s, x, 1.55, halfW, 5.15);
+  const rows = (x, w, head, items) => {
+    text(s, head, { x, y: 1.8, w, h: 0.5, fontSize: FS.lead, bold: true });
+    items.forEach(([label, effect], i) => {
+      const y = 2.5 + i * 1.38;
+      chip(s, x, y, Math.min(w, 0.13 * label.length + 0.5), label, false);
+      text(s, effect, { x, y: y + 0.5, w, h: 0.8, fontSize: FS.label, color: C.text2 });
+    });
+  };
+  rows(halfX[0] + 0.35, halfW - 0.7, "The regtest chain", [
+    ["Someone pays the wallet 0.004 BTC", "Lands on the next unused address. The next sync exposes it: nobody pays a decoy."],
+    ["Mine a block", "Confirms what is waiting. Both copies must still show the same balance."],
+    ["Wallet sends 0.01 BTC", "Broadcast through bitcoind, not the sync server. Its change address is exposed at the next sync."],
+  ]);
+  rows(halfX[1] + 0.35, halfW - 0.7, "Restore", [
+    ["Copy descriptor · Copy ledger", "Together they are the restore set: the descriptor rebuilds the decoys, the ledger keeps their counts."],
+    ["Restore with the ledger", "Deletes the wallet database and cache. The next sync sends exactly the same addresses."],
+    ["Restore without the ledger", "Counts are lost. At the wrong padding, decoys are added or withdrawn and the score falls."],
+  ]);
+  s.addNotes(
+    "The Lab tab runs a private regtest chain, so you can make things happen while the server watches. " +
+    "A payment lands on the next unused address, and because that address goes from no history to some while it is watched, the next sync exposes it; that is a known limit, not a bug. " +
+    "Mining a block confirms what is pending, and a send is broadcast through bitcoind rather than the sync server, though its change still lands on an address the wallet watches. " +
+    "The restore set is the descriptor plus the ledger file: restoring with the ledger sends exactly the same query, while restoring without it at another padding changes decoys the server has already seen. " +
+    "In one measured case, restoring at padding 5 after syncs at 10 and 20 sent 670 scripthashes instead of 1,350 and the headline fell to 2.23 bits (docs/02-design.md, 'What each user action does').");
+}
+
+// ---- 11. Getting started ---------------------------------------------------------------------
+
+pres.addSection({ title: "Next steps" });
+{
+  const s = content("Try it yourself", "Next steps");
   const codeBlock = (y, label, lines) => {
     text(s, label, { x: L.MX, y, w: L.CW, h: 0.45, fontSize: FS.body, bold: true });
     const runs = lines.map((l, i) => ({ text: l, options: { color: l.startsWith("#") ? C.text2 : C.text1, breakLine: i < lines.length - 1 } }));
@@ -574,10 +550,10 @@ pres.addSection({ title: "Limits and next steps" });
     "A native build with cargo is described in the README, and docs/07-walkthrough.md runs every case with its expected output.");
 }
 
-// ---- 13. Closing -----------------------------------------------------------------------------
+// ---- 12. Closing -----------------------------------------------------------------------------
 
 {
-  const s = pres.addSlide({ masterName: "DARK", sectionTitle: "Limits and next steps" });
+  const s = pres.addSlide({ masterName: "DARK", sectionTitle: "Next steps" });
   s.addText("Haystack", { placeholder: "title" });
   s.addText("Private Electrum sync", { placeholder: "body" });
   text(s, REPO_URL, { x: 0.9, y: 4.2, w: 7.4, h: 0.5, fontSize: FS.lead, bold: true, color: C.background1 });
